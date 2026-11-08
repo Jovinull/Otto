@@ -39,6 +39,8 @@ function expenseFilter(householdId: string, range: DateRange) {
 export interface ExpenseFilter {
   categoryId?: string | undefined;
   memberId?: string | undefined;
+  /** Exclui gastos marcados como do casal (orcamento individual). */
+  onlyIndividual?: boolean | undefined;
 }
 
 export interface Total {
@@ -60,6 +62,7 @@ export async function sumExpenses(
         expenseFilter(householdId, range),
         filter.categoryId ? eq(tx.categoryId, filter.categoryId) : undefined,
         filter.memberId ? eq(tx.memberId, filter.memberId) : undefined,
+        filter.onlyIndividual ? eq(tx.isShared, false) : undefined,
       ),
     );
   return row ?? { totalCents: 0, count: 0 };
@@ -276,6 +279,7 @@ export interface BudgetView {
 export interface ExtraExpense {
   categoryId: string | null;
   memberId: string;
+  isShared: boolean;
   amountCents: number;
 }
 
@@ -297,10 +301,15 @@ export async function loadBudgetViews(
       .from(budgets)
       .where(and(eq(budgets.householdId, householdId), isNull(budgets.archivedAt))),
     db
-      .select({ categoryId: tx.categoryId, memberId: tx.memberId, totalCents: sumAmount })
+      .select({
+        categoryId: tx.categoryId,
+        memberId: tx.memberId,
+        isShared: tx.isShared,
+        totalCents: sumAmount,
+      })
       .from(tx)
       .where(expenseFilter(householdId, range))
-      .groupBy(tx.categoryId, tx.memberId),
+      .groupBy(tx.categoryId, tx.memberId, tx.isShared),
     db
       .select({ budgetId: budgetAlerts.budgetId, threshold: budgetAlerts.threshold })
       .from(budgetAlerts)
@@ -313,6 +322,7 @@ export async function loadBudgetViews(
     ...extras.map((extra) => ({
       categoryId: extra.categoryId,
       memberId: extra.memberId,
+      isShared: extra.isShared,
       totalCents: extra.amountCents,
     })),
   ];
@@ -323,7 +333,8 @@ export async function loadBudgetViews(
       .filter(
         (row) =>
           (budget.categoryId === null || row.categoryId === budget.categoryId) &&
-          (budget.memberId === null || row.memberId === budget.memberId),
+          // Orcamento individual conta so gastos individuais da pessoa.
+          (budget.memberId === null || (row.memberId === budget.memberId && !row.isShared)),
       )
       .reduce((total, row) => total + row.totalCents, 0);
     return {

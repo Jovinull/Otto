@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte } from 'drizzle-orm';
 import { newThresholds } from '../../domain/budgets/budget';
 import { findRecurringMatch } from '../../domain/finance/recurring';
 import type {
@@ -17,7 +17,7 @@ import {
   recurringEntries,
   recurringSettlements,
 } from '../../infrastructure/database/schema';
-import { formatShortDate, periodOf, resolveDateExpression } from '../../shared/dates';
+import { formatShortDate, monthRange, periodOf, resolveDateExpression } from '../../shared/dates';
 import { formatBRL, splitInstallments } from '../../shared/money';
 import type { Actor, Deps, Effect, Reply } from '../context';
 import { ledgerContext, replyOnly } from '../context';
@@ -27,6 +27,10 @@ import { budgetNudge, registeredOpener, thresholdLabel } from '../services/tone'
 import { auditStatement } from './shared';
 
 export const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+/** Lancamento igual da outra pessoa nessa janela sugere que os dois registraram a mesma compra. */
+const DUPLICATE_WINDOW_MS = 12 * 60 * 60 * 1000;
+/** Da mesma pessoa, so um reenvio quase imediato e suspeito (dois cafes iguais sao normais). */
+const SELF_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 const MAX_INSTALLMENTS = 48;
 
 export interface RecordOptions {
@@ -198,6 +202,65 @@ function transactionLine(actor: Actor, transaction: ResolvedTransaction, id: str
   return line;
 }
 
+/** Soma dos lancamentos confirmados do mes que correspondem a recorrencia. */
+async function matchedAmountInPeriod(
+  deps: Deps,
+  actor: Actor,
+  entry: typeof recurringEntries.$inferSelect,
+  period: string,
+): Promise<number> {
+  const range = monthRange(period);
+  const rows = await deps.db
+    .select({
+      description: financialTransactions.description,
+      memberId: financialTransactions.memberId,
+      amountCents: financialTransactions.amountCents,
+    })
+    .from(financialTransactions)
+    .where(
+      and(
+        eq(financialTransactions.householdId, actor.scope.household.id),
+        eq(financialTransactions.status, 'confirmed'),
+        eq(financialTransactions.type, entry.kind),
+        gte(financialTransactions.financialDate, range.from),
+        lte(financialTransactions.financialDate, range.to),
+      ),
+    );
+  return rows
+    .filter((row) => findRecurringMatch(row.description, entry.kind, row.memberId, [entry]))
+    .reduce((sum, row) => sum + row.amountCents, 0);
+}
+
+/** Lancamento igual feito ha pouco: os dois registraram a mesma compra, ou reenvio acidental. */
+async function findRecentTwin(
+  deps: Deps,
+  actor: Actor,
+  transaction: ResolvedTransaction,
+): Promise<{ memberId: string; createdAt: number } | null> {
+  const rows = await deps.db
+    .select({
+      memberId: financialTransactions.createdByMemberId,
+      createdAt: financialTransactions.createdAt,
+    })
+    .from(financialTransactions)
+    .where(
+      and(
+        eq(financialTransactions.householdId, actor.scope.household.id),
+        eq(financialTransactions.status, 'confirmed'),
+        eq(financialTransactions.type, transaction.type),
+        eq(financialTransactions.amountCents, transaction.amountCents),
+        eq(financialTransactions.financialDate, transaction.financialDate),
+        gte(financialTransactions.createdAt, deps.now() - DUPLICATE_WINDOW_MS),
+      ),
+    );
+  return (
+    rows.find(
+      (row) =>
+        row.memberId !== actor.member.id || row.createdAt >= deps.now() - SELF_DUPLICATE_WINDOW_MS,
+    ) ?? null
+  );
+}
+
 async function settlementStatements(
   deps: Deps,
   actor: Actor,
@@ -236,6 +299,8 @@ async function settlementStatements(
   const statements: Stmt[] = [];
   const notes: string[] = [];
   const taken = new Set(settled.map((row) => `${row.entryId}:${row.period}`));
+  /** Valores ja vinculados nesta mesma mensagem, por recorrencia e mes. */
+  const inMessage = new Map<string, number>();
   for (const { id, transaction } of candidates) {
     const period = periodOf(transaction.financialDate);
     const open = entries.filter((entry) => !taken.has(`${entry.id}:${period}`));
@@ -246,7 +311,20 @@ async function settlementStatements(
       open,
     );
     if (!match) continue;
-    taken.add(`${match.id}:${period}`);
+    const key = `${match.id}:${period}`;
+    if (match.amountCents !== null) {
+      // Pagamento ou recebimento parcial nao quita a previsao do mes.
+      const earlier = await matchedAmountInPeriod(deps, actor, match, period);
+      const total = earlier + (inMessage.get(key) ?? 0) + transaction.amountCents;
+      inMessage.set(key, (inMessage.get(key) ?? 0) + transaction.amountCents);
+      if (total < match.amountCents) {
+        notes.push(
+          `${match.kind === 'income' ? 'Recebido' : 'Pago'} até agora de "${match.description}" neste mês: ${formatBRL(total)} de ${formatBRL(match.amountCents)} previstos. Ainda não marquei como ${match.kind === 'income' ? 'recebido' : 'pago'}.`,
+        );
+        continue;
+      }
+    }
+    taken.add(key);
     statements.push(
       deps.db.insert(recurringSettlements).values({
         id: deps.newId(),
@@ -304,6 +382,7 @@ async function budgetFollowUp(
       .map((i) => ({
         categoryId: i.transaction.categoryId,
         memberId: i.transaction.memberId,
+        isShared: i.transaction.isShared,
         amountCents: i.transaction.amountCents,
       }));
     const views = await loadBudgetViews(deps.db, actor.scope, period, extras);
@@ -311,7 +390,7 @@ async function budgetFollowUp(
       const affected = extras.some(
         (extra) =>
           (view.categoryId === null || view.categoryId === extra.categoryId) &&
-          (view.memberId === null || view.memberId === extra.memberId),
+          (view.memberId === null || (view.memberId === extra.memberId && !extra.isShared)),
       );
       if (!affected) continue;
       const fresh = newThresholds(
@@ -378,7 +457,21 @@ export async function recordDrafts(
     resolved.push(outcome.transaction);
   }
 
-  if (options.confirmationReason) {
+  let confirmationReason = options.confirmationReason ?? null;
+  if (!confirmationReason && options.origin !== 'confirmation') {
+    for (const transaction of resolved) {
+      const twin = await findRecentTwin(deps, actor, transaction);
+      if (!twin) continue;
+      const who =
+        twin.memberId === actor.member.id
+          ? 'você mesmo'
+          : (actor.scope.members.find((m) => m.id === twin.memberId)?.name ?? 'alguém');
+      confirmationReason = `Parece repetido: ${who} já registrou ${formatBRL(transaction.amountCents)} nessa data há pouco. Registrar de novo mesmo assim?`;
+      break;
+    }
+  }
+
+  if (confirmationReason) {
     const pendingId = deps.newId();
     const frozen = freezeDrafts(drafts, actor.today);
     return {
@@ -391,7 +484,7 @@ export async function recordDrafts(
       ],
       replies: [
         {
-          text: `${options.confirmationReason}\n${frozen.map((d) => `• ${describeDraft(d)}`).join('\n')}\nConfirma?`,
+          text: `${confirmationReason}\n${frozen.map((d) => `• ${describeDraft(d)}`).join('\n')}\nConfirma?`,
           buttons: confirmationButtons(pendingId),
         },
       ],
@@ -411,6 +504,22 @@ export async function recordDrafts(
   }
 
   const settlement = await settlementStatements(deps, actor, items);
+  const reserveIds = new Set(
+    actor.scope.accounts
+      .filter((a) => a.kind === 'reserve' || a.kind === 'savings')
+      .map((a) => a.id),
+  );
+  const toReserve = items.find(
+    (i) =>
+      i.transaction.transferKind === 'internal' &&
+      i.transaction.destinationAccountId !== null &&
+      reserveIds.has(i.transaction.destinationAccountId),
+  );
+  if (toReserve) {
+    settlement.notes.push(
+      `Se esse dinheiro é para o apartamento, confirme com /aporte ${formatBRL(toReserve.transaction.amountCents).replace('R$ ', '')}: transferência sozinha não conta na meta.`,
+    );
+  }
   const budget = await budgetFollowUp(deps, actor, items, actor.eventId);
   statements.push(...settlement.statements, ...budget.statements);
 

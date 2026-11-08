@@ -214,7 +214,7 @@ describe('transferencias e cartao', () => {
     await h.say('/addconta corrente SemSaldo');
     await h.say('/contas');
     expect(h.messaging.last()).toContain('saldo inicial desconhecido');
-    expect(h.messaging.last()).toContain('Não dá para afirmar o total disponível');
+    expect(h.messaging.last()).toContain('Não dá para afirmar o total em contas');
   });
 });
 
@@ -409,11 +409,11 @@ describe('orcamento', () => {
 
     await h.say('/gasto 14 ifood');
     expect(await h.count('budget_alerts', 'threshold = 100')).toBe(1);
-    await h.say('/gasto 1 ifood');
-    expect(h.messaging.last()).toMatch(/estourou em R\$ 1,00|Passou R\$ 1,00/);
+    await h.say('/gasto 2 ifood');
+    expect(h.messaging.last()).toMatch(/estourou em R\$ 2,00|Passou R\$ 2,00/);
     expect(await h.count('budget_alerts')).toBe(3);
 
-    await h.say('/gasto 1 ifood');
+    await h.say('/gasto 3 ifood');
     expect(await h.count('budget_alerts')).toBe(3);
   });
 
@@ -430,9 +430,9 @@ describe('orcamento', () => {
     await h.say('/gasto 90 cinema');
     await h.say('/orcamento');
     expect(h.messaging.last()).toContain('R$ 0,00 de R$ 100,00');
-    await h.say('/gasto 90 cinema', { from: JENNIFER_ID });
+    await h.say('/gasto 80 cinema', { from: JENNIFER_ID });
     await h.say('/orcamento');
-    expect(h.messaging.last()).toContain('R$ 90,00 de R$ 100,00');
+    expect(h.messaging.last()).toContain('R$ 80,00 de R$ 100,00');
   });
 
   it('transferencia nao consome orcamento', async () => {

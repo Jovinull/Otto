@@ -119,6 +119,7 @@ export async function setBudget(
   const { totalCents: spent } = await sumExpenses(deps.db, householdId, monthRange(period), {
     categoryId: category?.id,
     memberId: member?.id,
+    onlyIndividual: member !== null,
   });
   const notes =
     spent > 0

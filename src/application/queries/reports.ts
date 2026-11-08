@@ -101,14 +101,23 @@ export async function balancesReport(deps: Deps, scope: Scope): Promise<string> 
   if (scope.accounts.length === 0) {
     return 'Nenhuma conta cadastrada ainda. Use /addconta (veja /ajuda contas).';
   }
-  const balances = await accountBalances(deps.db, scope);
+  const [balances, goals] = await Promise.all([
+    accountBalances(deps.db, scope),
+    loadGoals(deps.db, scope.household.id, '9999-12-31'),
+  ]);
   const lines = ['Contas (saldos conhecidos pelo Otto, sem integração com o banco):'];
   let knownCash = 0;
   let unknownCount = 0;
+  let cardDebt = 0;
   for (const account of balances) {
     if (account.kind === 'credit_card') {
-      const debt = -(account.balanceCents ?? 0);
-      lines.push(`💳 ${account.name}: dívida em aberto ${formatBRL(Math.max(debt, 0))}`);
+      const balance = account.balanceCents ?? 0;
+      cardDebt += Math.max(-balance, 0);
+      lines.push(
+        balance > 0
+          ? `💳 ${account.name}: crédito a favor ${formatBRL(balance)}`
+          : `💳 ${account.name}: dívida em aberto ${formatBRL(-balance)}`,
+      );
     } else if (account.balanceCents === null) {
       unknownCount += 1;
       lines.push(
@@ -122,10 +131,21 @@ export async function balancesReport(deps: Deps, scope: Scope): Promise<string> 
     }
   }
   if (unknownCount === 0) {
-    lines.push(`Disponível nas contas (fora reservas): ${formatBRL(knownCash)}`);
+    lines.push(`Em contas, fora reservas: ${formatBRL(knownCash)}`);
   } else {
-    lines.push('Não dá para afirmar o total disponível: falta saldo inicial de alguma conta.');
+    lines.push('Não dá para afirmar o total em contas: falta saldo inicial de alguma conta.');
   }
+  if (cardDebt > 0)
+    lines.push(`Dívida total nos cartões (inclui parcelas futuras): ${formatBRL(cardDebt)}`);
+  const earmarked = goals.reduce((sum, goal) => sum + Math.max(goal.progress.confirmedCents, 0), 0);
+  if (earmarked > 0) {
+    lines.push(
+      `Separado para metas (confirmado): ${formatBRL(earmarked)}. Se está numa dessas contas, não é dinheiro livre.`,
+    );
+  }
+  lines.push(
+    'Saldo em conta não é o mesmo que livre para gastar: veja /compromissos e /orcamento.',
+  );
   return lines.join('\n');
 }
 
