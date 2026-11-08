@@ -1,0 +1,56 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "otto-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": false,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
+  // Ambiente padrao: somente desenvolvimento local. O id abaixo nunca aponta
+  // para um banco remoto; o D1 local fica em .wrangler/state.
+  "vars": {
+    "APP_ENV": "development",
+    "OPENAI_MODEL_FAST": "gpt-6-luna",
+    "OPENAI_MODEL_ANALYSIS": "gpt-6.1-terra",
+    "OPENAI_MONTHLY_BUDGET_USD": "3",
+    "OPENAI_DAILY_BUDGET_USD": "0.30",
+    "OPENAI_PRICING_JSON": "{\"gpt-6-luna\":{\"input\":0.10,\"cachedInput\":0.01,\"output\":0.50},\"gpt-6.1-terra\":{\"input\":1.00,\"cachedInput\":0.05,\"output\":5.00}}",
+    "AI_MAX_CALLS_PER_MEMBER_PER_MINUTE": "10",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "otto-local",
+      "database_id": "00000000-0000-4000-8000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+
+  "env": {
+    "production": {
+      "name": "otto",
+      "workers_dev": true,
+      "preview_urls": false,
+      // Os Cron Triggers operam em UTC. O job horario converte para o fuso do Household.
+      "triggers": { "crons": ["*/2 * * * *", "0 * * * *"] },
+      "vars": {
+        "APP_ENV": "production",
+        "OPENAI_MODEL_FAST": "gpt-6-luna",
+        "OPENAI_MODEL_ANALYSIS": "gpt-6.1-terra",
+        "OPENAI_MONTHLY_BUDGET_USD": "3",
+        "OPENAI_DAILY_BUDGET_USD": "0.30",
+        "OPENAI_PRICING_JSON": "{\"gpt-6-luna\":{\"input\":0.10,\"cachedInput\":0.01,\"output\":0.50},\"gpt-6.1-terra\":{\"input\":1.00,\"cachedInput\":0.05,\"output\":5.00}}",
+        "AI_MAX_CALLS_PER_MEMBER_PER_MINUTE": "10",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "otto-prod",
+          // Substituir pelo id retornado por `wrangler d1 create otto-prod`.
+          "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+          "migrations_dir": "migrations",
+        },
+      ],
+    },
+  },
+}

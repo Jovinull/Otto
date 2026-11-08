@@ -1,0 +1,6 @@
+migrations/
+dist/
+.wrangler/
+pnpm-lock.yaml
+pnpm-workspace.yaml
+src/worker-configuration.d.ts

@@ -1,0 +1,6 @@
+# Segredos do `wrangler dev`. Copie para .dev.vars. Use valores falsos no ambiente local.
+TELEGRAM_BOT_TOKEN=local-token
+TELEGRAM_WEBHOOK_SECRET=local-webhook-secret
+ADMIN_API_TOKEN=local-admin-token
+# Deixe vazio para rodar sem IA; mensagens naturais ficam na fila de retentativa.
+OPENAI_API_KEY=
