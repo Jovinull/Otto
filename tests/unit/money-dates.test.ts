@@ -27,6 +27,8 @@ describe('parseBRL', () => {
     ['1,5 mil', 150000],
     ['2k', 200000],
     ['38 reais', 3800],
+    ['uns 30 reais', 3000],
+    ['cerca de 1.250,00', 125000],
     ['0,01', 1],
   ])('interpreta %s', (input, cents) => {
     expect(parseBRL(input)).toEqual({ status: 'ok', cents });

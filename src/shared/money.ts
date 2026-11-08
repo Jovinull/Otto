@@ -28,6 +28,7 @@ export function parseBRL(input: string): ParsedAmount {
   let text = input
     .trim()
     .toLowerCase()
+    .replace(/^(uns|umas|cerca de|aproximadamente|mais ou menos)\s+/, '')
     .replace(/^r\$\s*/, '')
     .replace(/\s*(reais|real|conto|contos|pila|pilas)$/, '')
     .trim();
