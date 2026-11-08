@@ -27,6 +27,7 @@ import { cashFlow, loadBudgetViews, loadCommitments, loadGoals } from '../querie
 import { goalReport, monthReport, weekReport } from '../queries/reports';
 import { findDueEvents, processEvent } from '../services/inbox';
 import { thresholdLabel } from '../services/tone';
+import { cardStatement } from '../queries/cards';
 import { deliverDueMessages } from './outbox';
 import { canStartEvent, hasBudget } from '../../infrastructure/database/metered';
 
@@ -82,12 +83,22 @@ async function billReminders(deps: Deps, scope: Scope, clock: LocalClock): Promi
         item.expected.date !== null &&
         targets.has(item.expected.date),
     );
-  if (due.length === 0) return [];
   const lines = due.map((item) => {
     const value = item.amountCents === null ? 'valor variável' : formatBRL(item.amountCents);
     const when = item.expected.date === clock.date ? 'hoje' : formatShortDate(item.expected.date!);
     return `• ${item.description}: ${value} (${item.expected.approximate ? 'aprox. ' : ''}${when})`;
   });
+  // Faturas fechadas com saldo a pagar e vencimento na janela do lembrete.
+  for (const card of scope.accounts.filter((a) => a.kind === 'credit_card')) {
+    const statement = await cardStatement(deps.db, scope, card, clock.date);
+    for (const invoice of statement?.invoices ?? []) {
+      if (invoice.remainingCents === 0 || !targets.has(invoice.dueDate)) continue;
+      if (invoice.status === 'current' || invoice.status === 'future') continue;
+      const when = invoice.dueDate === clock.date ? 'hoje' : formatShortDate(invoice.dueDate);
+      lines.push(`• Fatura ${card.name}: ${formatBRL(invoice.remainingCents)} (${when})`);
+    }
+  }
+  if (lines.length === 0) return [];
   return [
     enqueue(
       deps,

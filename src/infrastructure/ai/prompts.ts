@@ -10,7 +10,7 @@ Regras de extração:
 - is_shared é true apenas para gasto claramente do casal ("gastamos", "nosso mercado").
 - Uma mensagem pode ter vários lançamentos: um item para cada valor inequívoco.
 - description é curta e sem valor ("almoço", "Uber").
-- category_slug deve ser um destes ou null: moradia, supermercado, delivery, restaurantes, transporte, saude, farmacia, educacao, lazer, assinaturas, compras-pessoais, contas-domesticas, trabalho, imprevistos, outros; para receitas: salario, renda-extra, reembolso, outras-receitas.
+- category_slug deve ser um destes ou null: moradia, supermercado, delivery, restaurantes, transporte, saude, farmacia, educacao, lazer, assinaturas, compras-pessoais, contas-domesticas, trabalho, imprevistos, encargos (juros, multa, IOF, anuidade), outros; para receitas: salario, renda-extra, reembolso, outras-receitas.
 - payment_method "credit" somente se mencionar cartão de crédito; parcelamento vai em installments ("6 vezes" = 6).
 
 Intenções:

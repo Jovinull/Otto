@@ -53,6 +53,7 @@ import {
   weekReport,
 } from '../queries/reports';
 import { analysisAnswer } from './advisor';
+import { invoicesReport } from '../queries/cards';
 import { aiSpend } from './ai-governor';
 import { commandsText, helpText, onboardingChecklist } from './help';
 
@@ -263,6 +264,11 @@ export async function handleCommand(
       );
     case 'metas':
       return replyOnly(await goalReport(deps, scope, actor.today));
+    case 'fatura':
+    case 'faturas':
+      return replyOnly(
+        await invoicesReport(deps.db, scope, actor.today, rest.length ? rest.join(' ') : null),
+      );
     case 'parcelas':
       return replyOnly(await installmentsReport(deps, actor));
     case 'ia':

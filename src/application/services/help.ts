@@ -28,7 +28,7 @@ Estornar: /estornar a1b2c3 (pede confirmação)`,
 /padrao Nome define sua conta padrão
 /transferir 500 origem para destino · /pagar_fatura 850 origem para cartao
 Sem saldo inicial eu mostro só o que foi movimentado aqui, nunca um saldo real.
-Limitação atual: mostro a dívida total do cartão, não a fatura separada por ciclo.`,
+/fatura mostra cada fatura (fechada, atual e parcelas futuras) quando o cartão tem fecha= e vence=.\nJuros e multas: lance como gasto no cartão, ex.: /gasto 12,90 juros @Nubank.`,
   editar: `Editar cadastros
 /editconta Nubank fecha=3 vence=10 · /editconta Nubank saldo=1500 (saldo=? apaga)
 /editconta Nubank nome=Nubank_Felipe dono=Felipe padrao (use _ no lugar de espaço)
@@ -81,6 +81,7 @@ Consultas
 /orcamento [categoria] — situação dos orçamentos
 /metas — meta do apartamento
 /parcelas — parcelamentos ativos
+/fatura [cartão] — faturas do cartão: total, pago e pendente
 /ultimos [N] — últimos lançamentos com código
 /categorias — categorias e códigos
 /analise [pergunta] — análise do mês

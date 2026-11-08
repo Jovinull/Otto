@@ -171,7 +171,9 @@ describe('transferencias e cartao', () => {
   });
 
   it('parcelamento guarda cronograma sem inventar vencimento', async () => {
-    await h.say('/gasto 1200 celular cartao 6x');
+    // Cartao sem dias de fechamento e vencimento: o cronograma fica sem datas.
+    await h.say('/addconta cartao Inter');
+    await h.say('/gasto 1200 celular @Inter 6x');
     const [tx] = await txs();
     expect(tx!.amount_cents).toBe(120000);
     const parts = await h.query<{ amount_cents: number; due_date: string | null }>(

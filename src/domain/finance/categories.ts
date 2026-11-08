@@ -38,6 +38,7 @@ export const DEFAULT_CATEGORIES: readonly CategorySeed[] = [
   { slug: 'contas-domesticas', name: 'Contas domésticas', kind: 'expense', nature: 'essential' },
   { slug: 'trabalho', name: 'Trabalho', kind: 'expense', nature: 'other' },
   { slug: 'imprevistos', name: 'Imprevistos', kind: 'expense', nature: 'other' },
+  { slug: 'encargos', name: 'Juros e encargos', kind: 'expense', nature: 'other' },
   { slug: FALLBACK_EXPENSE_SLUG, name: 'Outros', kind: 'expense', nature: 'other' },
   { slug: 'salario', name: 'Salário', kind: 'income', nature: 'other' },
   { slug: 'renda-extra', name: 'Renda extra', kind: 'income', nature: 'other' },
@@ -46,6 +47,7 @@ export const DEFAULT_CATEGORIES: readonly CategorySeed[] = [
 ];
 
 const EXPENSE_KEYWORDS: Record<string, readonly string[]> = {
+  encargos: ['juros', 'multa', 'iof', 'encargo', 'encargos', 'anuidade', 'tarifa'],
   delivery: ['ifood', 'rappi', 'delivery', 'pizza'],
   restaurantes: ['almoco', 'jantar', 'restaurante', 'lanchonete', 'lanche'],
   supermercado: ['mercado', 'supermercado', 'feira', 'hortifruti', 'atacadao', 'assai'],

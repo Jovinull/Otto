@@ -7,6 +7,8 @@ import type {
   TransactionDraft,
 } from '../../domain/finance/transactions';
 import { resolveDraft } from '../../domain/finance/transactions';
+import { cycleForInstallment } from '../../domain/finance/card-cycle';
+import { cardDays } from '../queries/cards';
 import type { Stmt } from '../../infrastructure/database/client';
 import {
   budgetAlerts,
@@ -149,6 +151,10 @@ function statementsForTransaction(
 
   if (transaction.installments !== null) {
     const planId = deps.newId();
+    // Com fechamento e vencimento cadastrados, o cronograma e calculado; sem eles, fica vazio.
+    const days = installmentCardDays(actor, transaction);
+    const dueOf = (sequence: number) =>
+      days ? cycleForInstallment(transaction.financialDate, sequence, days).dueDate : null;
     statements.push(
       deps.db.insert(installmentPlans).values({
         id: planId,
@@ -156,6 +162,7 @@ function statementsForTransaction(
         transactionId: id,
         totalCents: transaction.amountCents,
         installmentCount: transaction.installments,
+        firstDueDate: dueOf(1),
         createdAt: now,
       }),
     );
@@ -166,11 +173,17 @@ function statementsForTransaction(
           planId,
           sequence: i + 1,
           amountCents: amount,
+          dueDate: dueOf(i + 1),
         }),
       );
     });
   }
   return statements;
+}
+
+function installmentCardDays(actor: Actor, transaction: ResolvedTransaction) {
+  const card = actor.scope.accounts.find((a) => a.id === transaction.sourceAccountId);
+  return card ? cardDays(card) : null;
 }
 
 function transactionLine(actor: Actor, transaction: ResolvedTransaction, id: string): string {
@@ -197,7 +210,11 @@ function transactionLine(actor: Actor, transaction: ResolvedTransaction, id: str
   let line = `${amount} em ${transaction.categoryName}${who}${account}${whenText}. ${code}`;
   if (transaction.installments !== null) {
     const parts = splitInstallments(transaction.amountCents, transaction.installments);
-    line += `\n${transaction.installments}x de ${formatBRL(parts[parts.length - 1]!)}${parts[0] !== parts[parts.length - 1] ? ` (1ª de ${formatBRL(parts[0]!)})` : ''}. Sem data de 1º vencimento ainda: informe com /parcela_data ${shortId(id)} 10/12.`;
+    const days = installmentCardDays(actor, transaction);
+    const schedule = days
+      ? `1ª parcela na fatura que vence ${formatShortDate(cycleForInstallment(transaction.financialDate, 1, days).dueDate)}.`
+      : `Sem data de 1º vencimento ainda: cadastre os dias do cartão (/editconta ${transaction.sourceAccountName} fecha=3 vence=10) ou informe com /parcela_data ${shortId(id)} 10/12.`;
+    line += `\n${transaction.installments}x de ${formatBRL(parts[parts.length - 1]!)}${parts[0] !== parts[parts.length - 1] ? ` (1ª de ${formatBRL(parts[0]!)})` : ''}. ${schedule}`;
   }
   return line;
 }
