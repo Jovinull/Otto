@@ -1,6 +1,7 @@
 // Registra o webhook no Telegram com secret_token e mostra o estado, sem imprimir o token.
-// Uso: pnpm telegram:webhook           registra
-//      pnpm telegram:webhook -- --info apenas consulta
+// Uso: pnpm telegram:webhook             registra
+//      pnpm telegram:webhook -- --info   apenas consulta
+//      pnpm telegram:webhook -- --remove pausa o bot: o Telegram guarda os updates por ate 24 h
 import { loadSettings, required } from './lib.mjs';
 
 const settings = loadSettings();
@@ -16,7 +17,19 @@ if (!settings.OTTO_BASE_URL.startsWith('https://')) {
   process.exit(1);
 }
 
-if (!process.argv.includes('--info')) {
+if (process.argv.includes('--remove')) {
+  const response = await fetch(api('deleteWebhook'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    // Sem drop_pending_updates: nada enviado no grupo se perde enquanto pausado (ate 24 h).
+    body: JSON.stringify({ drop_pending_updates: false }),
+  });
+  const result = await response.json();
+  console.log(
+    'deleteWebhook:',
+    result.ok ? 'ok (bot pausado; dados intactos)' : result.description,
+  );
+} else if (!process.argv.includes('--info')) {
   const response = await fetch(api('setWebhook'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

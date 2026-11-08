@@ -56,9 +56,11 @@ E rode `pnpm bootstrap:household`. A resposta esperada é `HTTP 201`. Uma segund
 pnpm telegram:webhook
 ```
 
-O script registra `https://<seu-worker>/webhook/telegram` com `secret_token`, recebendo apenas `message`, `edited_message` e `callback_query`, e mostra `getWebhookInfo` (sem imprimir o token).
+O script registra `https://<seu-worker>/webhook/telegram` com `secret_token`, recebendo apenas `message`, `edited_message` e `callback_query`, com `max_connections = 1` (um update por vez, preservando a ordem), e mostra `getWebhookInfo` sem imprimir o token. Para pausar o bot sem perder dados: `pnpm telegram:webhook -- --remove`.
 
 ## 7. Verificar
+
+- `pnpm doctor:telegram` confere token, webhook, erros de entrega, se o bot lê o grupo e quantas pessoas há nele, sem alterar nada.
 
 - `pnpm telegram:webhook -- --info` deve mostrar a URL e `pending_update_count: 0`, sem `last_error_message`.
 - No grupo: `/status` responde com "Otto ativo (production)".

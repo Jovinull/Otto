@@ -36,23 +36,32 @@ Restrições no próprio banco: valor > 0, forma de cada tipo (transferência ex
 
 **Cartão de crédito.** A compra é a despesa (competência na data da compra) e aumenta a dívida do cartão. O pagamento da fatura é transferência `card_payment` da conta para o cartão: reduz a dívida e o saldo da conta, sem nova despesa. Assim compra + fatura nunca duplicam o gasto. Compra no crédito sem cartão cadastrado é recusada.
 
-**Parcelamento.** Uma despesa com o valor total (competência na compra) e um plano com N parcelas que somam exatamente o total. A data da 1ª parcela fica vazia até o casal informar (`/parcela_data`). O saldo futuro de parcelas aparece como compromisso, não como gasto novo.
+**Fatura.** Com `fecha=` e `vence=` cadastrados, cada compra pertence a um ciclo. Regra adotada: compras até a véspera do dia de fechamento entram na fatura que fecha naquele mês; compras no dia do fechamento ou depois vão para a seguinte. Alguns bancos tratam o próprio dia do fechamento de outro jeito; se o de vocês for diferente, ajuste o dia cadastrado. O vencimento cai no mesmo mês do fechamento quando o dia de vencimento é maior que o de fechamento, e no mês seguinte caso contrário. Dias 29 a 31 se ajustam a meses curtos. Pagamentos abatem as faturas da mais antiga para a mais nova; pagamento parcial deixa a fatura "paga em parte", com o valor que falta, e pagamento a mais vira crédito. `/fatura` mostra a última fatura fechada, a atual, faturas anteriores em aberto e parcelas futuras. Juros, multa, IOF e anuidade são lançados como gastos separados no cartão (categoria Juros e encargos); nada é calculado ou presumido.
 
-**Previsto vs realizado.** Receita prevista e contas recorrentes ficam em `recurring_entries` e nunca alteram saldo, totais ou orçamento. Só viram realizadas quando o casal relata o pagamento/recebimento; o lançamento é então ligado à recorrência daquele mês (se houver um único candidato cujo nome aparece na descrição). "Quinto dia útil" é calculado como 5º dia de segunda a sexta e marcado como aproximado: feriados não são considerados.
+**Parcelamento.** Uma despesa com o valor total (competência na compra) e um plano com N parcelas que somam exatamente o total. Cada parcela cai num ciclo de fatura consecutivo. Se o cartão tem dias cadastrados, os vencimentos são calculados por esse ciclo; se não tem, ficam vazios até o casal informar (`/parcela_data`) ou cadastrar os dias. O saldo futuro de parcelas aparece como compromisso, não como gasto novo. Orçamentos contam o valor total no mês da compra.
 
-**Orçamento.** Gasto do mês = soma das despesas confirmadas no escopo (categoria e/ou pessoa). Alertas nos limiares configurados (80 e 100) e em ultrapassagem, cada um uma vez por orçamento por mês, garantido por índice único.
+**Previsto vs realizado.** Receita prevista e contas recorrentes ficam em `recurring_entries` e nunca alteram saldo, totais ou orçamento. Só viram realizadas quando o casal relata o pagamento/recebimento; o lançamento é então ligado à recorrência daquele mês (se houver um único candidato cujo nome aparece na descrição). Pagamento ou recebimento parcial não quita a previsão: a baixa só acontece quando a soma dos lançamentos correspondentes do mês alcança o valor previsto (recorrências de valor variável são quitadas pelo primeiro pagamento). "Quinto dia útil" é calculado como 5º dia de segunda a sexta e marcado como aproximado: feriados não são considerados.
 
-**Meta.** Alvo = entrada + custos da compra. Guardado = soma de aportes confirmados (`inicial=` e `/aporte`) menos retiradas. Aporte pretendido é só planejamento. Reserva de emergência fica separada e não entra na meta. Transferência para a conta reserva também não entra automaticamente. Projeções ignoram rendimento e dizem isso.
+**Orçamento.** Gasto do mês = soma das despesas confirmadas no escopo (categoria e/ou pessoa). Orçamento individual conta só os gastos individuais da pessoa; gastos marcados como do casal (`casal`, "a gente gastou") entram nos orçamentos da casa. Alertas nos limiares configurados (80 e 100) e em ultrapassagem, cada um uma vez por orçamento por mês, garantido por índice único.
+
+**Meta.** Alvo = entrada + custos da compra. Guardado = soma de aportes confirmados (`inicial=` e `/aporte`) menos retiradas. "Realizado no mês" conta só aportes feitos no mês; o saldo inicial já existente não entra. Aporte pretendido é só planejamento. Reserva de emergência fica separada e não entra na meta. Transferência para a conta reserva também não entra automaticamente. Projeções ignoram rendimento e dizem isso.
 
 **Correção e estorno.** Corrigir valor, categoria ou data atualiza o lançamento com verificação de versão e grava auditoria (antes/depois). Estornar é exclusão lógica (`voided`) e exige confirmação; o lançamento sai dos totais, a recorrência volta a ficar em aberto e o histórico permanece. Pela IA, toda correção pede confirmação.
 
-**Proteções contra o modelo.** Valor extraído que não aparece literalmente na mensagem exige confirmação. Confiança baixa exige confirmação. Pessoa fora do Household é recusada. Categoria desconhecida cai na regra de palavras-chave. Texto de análise que cite valor ou percentual ausente dos fatos calculados é descartado e substituído pelo relatório determinístico.
+**Saldos.** `/contas` mostra o saldo conhecido de cada conta, a dívida total nos cartões (inclusive parcelas futuras) e o dinheiro já separado para metas. O Otto nunca chama a soma das contas de "disponível para gastar": dinheiro da meta pode estar numa dessas contas e há contas e faturas a pagar.
+
+**Lançamentos duplicados.** Um lançamento com o mesmo tipo, valor e data feito pela outra pessoa nas últimas 12 horas, ou pela mesma pessoa nos últimos 2 minutos, pede confirmação antes de ser gravado.
+
+**Cadastro guiado.** `/configurar` pergunta tom, renda, contas, contas fixas, limites e meta, guardando um rascunho. Nada é gravado no domínio antes do resumo final ser confirmado; a confirmação grava tudo numa transação. Valores pulados não são presumidos.
+
+**Proteções contra o modelo.** Valor extraído que não aparece literalmente na mensagem exige confirmação. Confiança baixa exige confirmação. Pessoa fora do Household é recusada. Categoria desconhecida cai na regra de palavras-chave. Texto de análise que cite valor ou percentual ausente dos fatos calculados é descartado e substituído pelo relatório determinístico. Compromisso sem dia nem recorrência ("vou receber 800 semana que vem", "a luz veio 187") não vira previsão mensal: o Otto pergunta se é recorrente.
 
 ## Limitações conhecidas
 
-- Cartão: mostra a dívida total do cartão, não a fatura separada por ciclo de fechamento. Dias de fechamento/vencimento são guardados mas ainda não usados para montar faturas.
-- Parcelas: a baixa de cada parcela é manual (`/parcela_paga`); o pagamento da fatura não baixa parcelas automaticamente.
+- Fatura: a regra do dia de fechamento é a mesma para todos os cartões; pagamentos são abatidos por ordem cronológica, sem indicar a qual fatura o casal quis pagar.
+- Parcelas: a marcação de parcela quitada (`/parcela_paga`) é manual e independente do abatimento da fatura.
 - Dia útil ignora feriados.
 - Uma meta de apartamento por Household; metas genéricas existem no modelo mas sem comandos.
-- O comparativo mensal compara o mesmo intervalo de dias do mês anterior e ignora categorias com menos de R$ 20 no mês anterior.
-- Mensagens enviadas muito rapidamente em sequência são processadas em paralelo; uma pode ser avaliada antes de a anterior ter sido gravada.
+- O comparativo mensal compara o mesmo intervalo de dias do mês anterior e ignora categorias com menos de R$ 20 no período anterior.
+- Uma mensagem que falha por mais de 3 minutos deixa de bloquear as seguintes; se ela for processada depois, sai fora de ordem (correções pela IA sempre pedem confirmação mostrando o lançamento afetado).
+- Nomes dos membros e fuso horário só mudam direto no banco.

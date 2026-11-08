@@ -19,25 +19,26 @@ O CODIGO aparece em cada confirmação (`#a1b2c3`) e em `/ultimos`.
 
 ## Consultas
 
-| Comando                       | Mostra                                                                |
-| ----------------------------- | --------------------------------------------------------------------- |
-| `/resumo` ou `/mes [MM/AAAA]` | Entradas, saídas, resultado e categorias do mês                       |
-| `/semana`                     | Semana atual (segunda a domingo)                                      |
-| `/comparar`                   | Mês atual vs mesmo intervalo do mês anterior                          |
-| `/individual`                 | Gastos individuais e compartilhados por pessoa                        |
-| `/contas`                     | Saldos conhecidos e dívida dos cartões                                |
-| `/compromissos`               | Contas em aberto e renda prevista do mês                              |
-| `/orcamento [categoria]`      | Situação dos orçamentos                                               |
-| `/metas`                      | Meta do apartamento                                                   |
-| `/parcelas`                   | Parcelamentos ativos                                                  |
-| `/ultimos [N]`                | Últimos lançamentos com código                                        |
-| `/categorias`                 | Categorias e códigos                                                  |
-| `/analise [pergunta]`         | Análise do mês (IA com números verificados, ou relatório puro)        |
-| `/configurar`                 | O que já foi cadastrado e o que falta                                 |
-| `/comandos`                   | Lista todos os comandos com uma descrição curta                       |
-| `/ia`                         | Consumo estimado de IA no dia e no mês                                |
-| `/status`                     | Fila, IA configurada, fuso                                            |
-| `/id`                         | IDs do chat e do usuário (antes do bootstrap, responde a qualquer um) |
+| Comando                       | Mostra                                                                                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `/resumo` ou `/mes [MM/AAAA]` | Entradas, saídas, resultado e categorias do mês                                                                      |
+| `/semana`                     | Semana atual (segunda a domingo)                                                                                     |
+| `/comparar`                   | Mês atual vs mesmo intervalo do mês anterior                                                                         |
+| `/individual`                 | Gastos individuais e compartilhados por pessoa                                                                       |
+| `/contas`                     | Saldos conhecidos e dívida dos cartões                                                                               |
+| `/compromissos`               | Contas em aberto e renda prevista do mês                                                                             |
+| `/orcamento [categoria]`      | Situação dos orçamentos                                                                                              |
+| `/metas`                      | Meta do apartamento                                                                                                  |
+| `/parcelas`                   | Parcelamentos ativos                                                                                                 |
+| `/fatura [cartão]`            | Faturas por ciclo: fechada, atual, em aberto e parcelas futuras                                                      |
+| `/ultimos [N]`                | Últimos lançamentos com código                                                                                       |
+| `/categorias`                 | Categorias e códigos                                                                                                 |
+| `/analise [pergunta]`         | Análise do mês (IA com números verificados, ou relatório puro)                                                       |
+| `/configurar`                 | Cadastro guiado; `pausar`, `refazer`, `status` ou uma etapa (`renda`, `contas`, `fixas`, `orcamento`, `apartamento`) |
+| `/comandos`                   | Lista todos os comandos com uma descrição curta                                                                      |
+| `/ia`                         | Consumo estimado de IA no dia e no mês                                                                               |
+| `/status`                     | Fila, IA configurada, fuso                                                                                           |
+| `/id`                         | IDs do chat e do usuário (antes do bootstrap, responde a qualquer um)                                                |
 
 ## Cadastro e planejamento
 

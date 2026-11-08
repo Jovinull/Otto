@@ -4,14 +4,17 @@ Assistente financeiro conversacional para um casal, num grupo privado do Telegra
 
 ## O que funciona
 
-- Registro de despesas, receitas, transferências, compras no cartão, parcelamentos e pagamento de fatura, por linguagem natural ou por comandos (`/gasto 25,50 mercado`).
+- Registro de despesas, receitas, transferências, compras no cartão, parcelamentos e pagamento de fatura, por linguagem natural ou por comandos (`/gasto 25,50 mercado`), com aviso de lançamento repetido.
+- Faturas por ciclo de fechamento e vencimento, com pagamento parcial, crédito e parcelas futuras (`/fatura`).
+- Cadastro guiado pelo Telegram (`/configurar`), que só ativa as configurações depois da confirmação.
 - Consultas reais no banco: gastos por período, categoria e pessoa, entradas e saídas, maiores despesas, saldos conhecidos, contas a pagar, renda prevista.
 - Orçamentos mensais por categoria, geral ou por pessoa, com alertas em 80%, 100% e ultrapassagem (uma vez por mês por limiar).
 - Meta do apartamento: alvo, guardado confirmado, progresso, falta, aporte necessário e projeção (sem rendimentos). Aporte pretendido nunca conta como guardado.
 - Recorrências (aluguel, contas, salário) como previsão; viram "pago/recebido" só quando o casal relata.
 - Correções e estornos com confirmação e trilha de auditoria.
 - Mensagens proativas no fuso do Household: contas a vencer, alertas, resumo semanal, fechamento mensal, acompanhamento da meta.
-- Fila durável (inbox/outbox no D1) com idempotência, retentativas com backoff e recuperação por Cron.
+- Fila durável (inbox/outbox no D1) com idempotência, retentativas com backoff, recuperação por Cron, processamento em ordem por chat e proteção contra conclusão por quem perdeu o lease.
+- Backup criptografado com manifesto e restauração verificada num banco isolado; diagnósticos (`doctor`, `doctor:telegram`) e smoke test real da OpenAI.
 - Controle de custo de IA: registro de tokens e custo estimado, limites diário e mensal, limite por pessoa por minuto.
 
 Limitações conhecidas estão em [docs/domain.md](docs/domain.md#limitações-conhecidas).
@@ -52,27 +55,40 @@ Sem token real do Telegram, as respostas ficam no outbox e a entrega falha com `
 ## Verificações
 
 ```bash
-pnpm test         # 213 testes no runtime do Workers com D1 local
+pnpm test         # 288 testes no runtime do Workers com D1 local
+pnpm test:scripts # testes do backup (Node)
 pnpm typecheck
 pnpm lint
 pnpm format:check
 pnpm build        # bundle de produção (dry-run)
 pnpm check        # tudo acima
+pnpm bench:cpu    # CPU por evento, sem o tempo do banco
 ```
 
 ## Colocar no ar
 
-Passo a passo em [docs/deployment.md](docs/deployment.md) e [docs/telegram-setup.md](docs/telegram-setup.md). Roteiro de teste com o grupo real em [docs/manual-test.md](docs/manual-test.md).
+Comece por [docs/first-deployment.md](docs/first-deployment.md): do BotFather ao primeiro backup, com comandos para PowerShell e Git Bash. Roteiro de teste com o grupo real em [docs/manual-test.md](docs/manual-test.md).
+
+## Testes com serviços reais (opcionais)
+
+Não rodam na CI e só consomem créditos com `--yes`:
+
+```bash
+pnpm smoke:openai -- --yes      # chave, modelo servido, saída estruturada, custo
+pnpm eval:openai -- --yes       # 44 mensagens do conjunto em evals/, taxa de acerto por tipo
+pnpm doctor:telegram            # somente leitura
+```
 
 ## Documentação
 
-| Documento                                        | Conteúdo                                                  |
-| ------------------------------------------------ | --------------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)     | Fluxo, camadas, decisões técnicas e limites da Cloudflare |
-| [docs/domain.md](docs/domain.md)                 | Regras financeiras, entidades e limitações                |
-| [docs/commands.md](docs/commands.md)             | Sintaxe de todos os comandos                              |
-| [docs/security.md](docs/security.md)             | Proteções, privacidade, retenção e riscos                 |
-| [docs/telegram-setup.md](docs/telegram-setup.md) | BotFather, grupo, Privacy Mode, IDs e webhook             |
-| [docs/deployment.md](docs/deployment.md)         | Cloudflare, segredos, migrações, publicação e rollback    |
-| [docs/operations.md](docs/operations.md)         | Custos, monitoramento, backup e restauração               |
-| [docs/manual-test.md](docs/manual-test.md)       | Roteiro ponta a ponta para o grupo real                   |
+| Documento                                            | Conteúdo                                                       |
+| ---------------------------------------------------- | -------------------------------------------------------------- |
+| [docs/first-deployment.md](docs/first-deployment.md) | Primeira implantação, passo a passo                            |
+| [docs/architecture.md](docs/architecture.md)         | Fluxo, ordem por chat, orçamento por invocação e decisões      |
+| [docs/domain.md](docs/domain.md)                     | Regras financeiras, entidades e limitações                     |
+| [docs/commands.md](docs/commands.md)                 | Sintaxe de todos os comandos                                   |
+| [docs/security.md](docs/security.md)                 | Proteções, privacidade, retenção e riscos                      |
+| [docs/telegram-setup.md](docs/telegram-setup.md)     | BotFather, grupo, Privacy Mode, IDs e webhook                  |
+| [docs/deployment.md](docs/deployment.md)             | Cloudflare, segredos, migrações, publicação e rollback         |
+| [docs/operations.md](docs/operations.md)             | Custos, capacidade medida, monitoramento, backup e restauração |
+| [docs/manual-test.md](docs/manual-test.md)           | Roteiro ponta a ponta para o grupo real                        |
