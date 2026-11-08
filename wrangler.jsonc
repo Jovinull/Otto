@@ -47,7 +47,7 @@
           "binding": "DB",
           "database_name": "otto-prod",
           // Substituir pelo id retornado por `wrangler d1 create otto-prod`.
-          "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+          "database_id": "3b48e1cb-3cca-4f56-aaec-05e5efccd611",
           "migrations_dir": "migrations",
         },
       ],
