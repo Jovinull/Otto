@@ -11,6 +11,7 @@ import {
 import type { PendingPayload } from '../commands/record-transactions';
 import { recordDrafts } from '../commands/record-transactions';
 import { applyArchiveAccount } from '../commands/editing';
+import { applyOnboarding, onboardingAnswer } from './onboarding';
 import type { Actor, Deps, Effect } from '../context';
 import { ledgerContext, replyOnly } from '../context';
 
@@ -50,6 +51,10 @@ async function executeConfirmation(deps: Deps, actor: Actor, row: PendingRow): P
       });
     case 'void_transaction':
       return applyVoid(deps, actor, payload.transactionId, [resolution]);
+    case 'onboarding_confirm':
+      return applyOnboarding(deps, actor, [resolution]);
+    case 'onboarding':
+      return { statements: [resolution], replies: [] };
     case 'archive_account':
       return applyArchiveAccount(deps, actor, payload.accountId, [resolution]);
     case 'void_contribution':
@@ -118,6 +123,7 @@ export async function handlePendingReply(
   if (!row || !canWrite(actor.member)) return null;
   const payload = parsePayload(row);
 
+  if (payload.type === 'onboarding') return onboardingAnswer(deps, actor, payload.step, text);
   if (payload.type !== 'fill_slot') {
     if (isAffirmative(text)) return executeConfirmation(deps, actor, row);
     if (isNegative(text)) return cancel(deps, row);

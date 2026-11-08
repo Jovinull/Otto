@@ -131,6 +131,8 @@ const TABLES = [
   'recurring_entries',
   'financial_transactions',
   'pending_actions',
+  'onboarding_sessions',
+  'lease_guard',
   'audit_events',
   'ai_usage',
   'incoming_events',

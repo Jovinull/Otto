@@ -371,6 +371,7 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
         direction: goalContributions.direction,
         amountCents: goalContributions.amountCents,
         contributionDate: goalContributions.contributionDate,
+        kind: goalContributions.kind,
       })
       .from(goalContributions)
       .where(
@@ -388,7 +389,10 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
       if (entry.goalId !== goal.id) continue;
       const signed = entry.direction === 'in' ? entry.amountCents : -entry.amountCents;
       confirmedCents += signed;
-      if (periodOf(entry.contributionDate) === currentPeriod) confirmedThisMonthCents += signed;
+      // O saldo inicial ja existia: nao e aporte feito no mes.
+      if (entry.kind !== 'initial' && periodOf(entry.contributionDate) === currentPeriod) {
+        confirmedThisMonthCents += signed;
+      }
     }
     return {
       id: goal.id,

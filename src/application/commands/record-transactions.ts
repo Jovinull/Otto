@@ -63,7 +63,9 @@ export type PendingPayload =
       value: string;
     }
   | { type: 'void_contribution'; contributionId: string }
-  | { type: 'archive_account'; accountId: string };
+  | { type: 'archive_account'; accountId: string }
+  | { type: 'onboarding'; step: string }
+  | { type: 'onboarding_confirm' };
 
 /** Fixa datas relativas agora: "ontem" nao pode mudar se a confirmacao vier no dia seguinte. */
 function freezeDrafts(drafts: TransactionDraft[], today: string): TransactionDraft[] {

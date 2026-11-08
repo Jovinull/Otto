@@ -757,7 +757,7 @@ describe('configuracao', () => {
   });
 
   it('checklist identifica o que falta sem bloquear lancamentos', async () => {
-    await h.say('/configurar');
+    await h.say('/configurar status');
     expect(h.messaging.last()).toContain('⬜ Contas');
     await h.say('/gasto 10 pão');
     expect(await h.count('financial_transactions')).toBe(1);

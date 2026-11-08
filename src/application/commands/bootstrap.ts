@@ -212,6 +212,9 @@ export async function eraseHousehold(deps: Deps, householdId: string): Promise<v
       .delete(schema.financialTransactions)
       .where(eq(schema.financialTransactions.householdId, householdId)),
     db.delete(schema.pendingActions).where(eq(schema.pendingActions.householdId, householdId)),
+    db
+      .delete(schema.onboardingSessions)
+      .where(eq(schema.onboardingSessions.householdId, householdId)),
     db.delete(schema.auditEvents).where(eq(schema.auditEvents.householdId, householdId)),
     db.delete(schema.aiUsage).where(eq(schema.aiUsage.householdId, householdId)),
     db.delete(schema.incomingEvents).where(eq(schema.incomingEvents.householdId, householdId)),

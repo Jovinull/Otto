@@ -53,6 +53,7 @@ import {
   weekReport,
 } from '../queries/reports';
 import { analysisAnswer } from './advisor';
+import { onboardingCommand } from './onboarding';
 import { invoicesReport } from '../queries/cards';
 import { aiSpend } from './ai-governor';
 import { commandsText, helpText, onboardingChecklist } from './help';
@@ -231,6 +232,8 @@ export async function handleCommand(
     case 'status':
       return replyOnly(await statusText(deps, actor));
     case 'configurar':
+      if (!canWrite(actor.member)) return replyOnly(await onboardingChecklist(deps, actor));
+      return onboardingCommand(deps, actor, rest);
     case 'configuracoes':
       return replyOnly(await onboardingChecklist(deps, actor));
     case 'resumo':

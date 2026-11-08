@@ -431,3 +431,16 @@ export const leaseGuard = sqliteTable(
   },
   (t) => [check('lease_guard_owner_only', sql`${t.reason} = 'never'`)],
 );
+
+/** Cadastro guiado: rascunho das respostas ate a confirmacao final. */
+export const onboardingSessions = sqliteTable('onboarding_sessions', {
+  householdId: text('household_id')
+    .primaryKey()
+    .references(() => households.id),
+  status: text('status', { enum: ['active', 'paused', 'completed'] }).notNull(),
+  conductorMemberId: text('conductor_member_id')
+    .notNull()
+    .references(() => householdMembers.id),
+  state: text('state').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});

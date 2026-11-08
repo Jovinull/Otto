@@ -11,7 +11,7 @@ Sem IA (sempre funciona):
 /resumo · /mes 10/2026 · /semana · /comparar · /individual
 /orcamento · /metas · /contas · /compromissos · /parcelas
 /ultimos · /corrigir · /estornar
-/configurar mostra o que falta cadastrar.
+/configurar faz o cadastro guiado; /configurar status mostra o que falta.
 /comandos lista todos os comandos.
 
 Mais detalhes: /ajuda gastos, /ajuda contas, /ajuda editar, /ajuda orcamento, /ajuda meta, /ajuda recorrentes, /ajuda opcoes`;
@@ -106,7 +106,7 @@ Editar e remover
 /orcamento categoria VALOR — muda o limite · /meta campo=valor — muda a meta
 
 Sistema
-/configurar — o que falta cadastrar
+/configurar — cadastro guiado (pausar, status, renda, contas, fixas, orcamento, apartamento)
 /tom neutro|amigavel|firme — estilo das respostas (admin)
 /notificacoes on|off — avisos automáticos (admin)
 /ia — consumo de IA · /status — saúde do Otto · /id — seus IDs
