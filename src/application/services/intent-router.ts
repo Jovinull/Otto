@@ -143,6 +143,14 @@ export async function routeIntent(
       if (!write) return replyOnly(READ_ONLY);
       const commitment = interpretation.commitment;
       if (!commitment) return replyOnly('Não entendi o compromisso. Veja /ajuda recorrentes.');
+      if (commitment.due_day === null && commitment.nth_business_day === null) {
+        // Sem dia, pode ser valor avulso ("a luz veio 187"): nao vira previsao mensal sozinho.
+        const value = commitment.amount_text ?? 'VALOR';
+        const kind = commitment.kind === 'income' ? 'receita' : 'despesa';
+        return replyOnly(
+          `Isso se repete todo mês? Se sim, me diga o dia: /recorrente ${kind} ${value} dia=10 ${commitment.description}. Se é só desta vez, eu registro quando for ${commitment.kind === 'income' ? 'recebido' : 'pago'}.`,
+        );
+      }
       if (
         commitment.amount_text !== null &&
         !amountAppearsInText(commitment.amount_text, message)

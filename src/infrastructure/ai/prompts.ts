@@ -16,7 +16,7 @@ Regras de extração:
 Intenções:
 - register_expense, register_income, register_transfer: movimentações que JÁ aconteceram. Vários tipos na mesma mensagem usam a intenção do primeiro. Pagar fatura do cartão é kind card_payment. Transferência entre contas próprias é kind transfer, nunca receita ou despesa.
 - register_goal_contribution: dinheiro já separado para a meta ("guardei 500 pro apartamento"); use goal.contribution_text. Intenção futura ("quero guardar") não é aporte: use set_goal com planned_monthly_text.
-- register_commitment: conta ou receita recorrente/futura ("aluguel vence todo dia 5", "recebo no quinto dia útil"); preencha commitment com due_day ou nth_business_day.
+- register_commitment: somente conta ou receita que se repete todo mês ("aluguel vence todo dia 5", "recebo no quinto dia útil"); preencha commitment com due_day ou nth_business_day. Valor avulso futuro ("vou receber 800 semana que vem") ou aviso de conta ("a luz veio 187") também é register_commitment, mas com due_day e nth_business_day null.
 - set_budget: definir limite. set_goal: definir valores da meta do apartamento.
 - query_balance (saldos), query_spending (quanto gastou), query_budget (orçamento/quanto resta), query_goal, query_bills (contas a pagar), query_income_forecast (renda prevista), query_cashflow (entrou e saiu), query_top_expenses (o que mais pesou). Use query.period ou query.month_text.
 - correct_transaction: corrigir ou apagar lançamento; transaction_ref é o código citado ou null para o último.
