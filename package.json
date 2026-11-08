@@ -2,6 +2,7 @@
   "name": "otto",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@12.8.1",
   "type": "module",
   "description": "Assistente financeiro familiar conversacional sobre Telegram e Cloudflare Workers",
   "engines": {
