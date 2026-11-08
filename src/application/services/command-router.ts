@@ -27,6 +27,14 @@ import {
   setInstallmentFirstDue,
   updateApartmentGoal,
 } from '../commands/planning';
+import {
+  editAccount,
+  editCategory,
+  editRecurring,
+  removeBudget,
+  removeRecurring,
+  requestArchiveAccount,
+} from '../commands/editing';
 import { recordDrafts } from '../commands/record-transactions';
 import { auditStatement } from '../commands/shared';
 import type { Actor, Deps, Effect } from '../context';
@@ -181,6 +189,12 @@ const WRITE_COMMANDS = new Set([
   'padrao',
   'parcela_data',
   'parcela_paga',
+  'editconta',
+  'removerconta',
+  'editcategoria',
+  'editrecorrente',
+  'removerrecorrente',
+  'removerorcamento',
 ]);
 
 const ADMIN_COMMANDS = new Set(['tom', 'notificacoes']);
@@ -431,6 +445,51 @@ export async function handleCommand(
     case 'parcela_data':
       if (rest.length < 2) return replyOnly('Formato: /parcela_data CODIGO DD/MM/AAAA');
       return setInstallmentFirstDue(deps, actor, rest[0]!, rest[1]!);
+    case 'editconta': {
+      const name = rest.filter((t) => normalizeText(t) !== 'padrao').join(' ');
+      if (!name) {
+        return replyOnly(
+          'Formato: /editconta Nome [nome=Novo_Nome] [saldo=VALOR|?] [fecha=N|-] [vence=N|-] [dono=Nome|casal] [padrao]',
+        );
+      }
+      return editAccount(deps, actor, name, {
+        name: options.get('nome'),
+        opening: options.get('saldo'),
+        closingDay: options.get('fecha'),
+        dueDay: options.get('vence'),
+        owner: options.get('dono'),
+        makeDefault: rest.some((t) => normalizeText(t) === 'padrao'),
+      });
+    }
+    case 'removerconta':
+      if (rest.length === 0) return replyOnly('Formato: /removerconta Nome');
+      return requestArchiveAccount(deps, actor, rest.join(' '));
+    case 'editcategoria':
+      if (rest.length === 0) {
+        return replyOnly(
+          'Formato: /editcategoria codigo [nome=Novo_Nome] [tipo=essencial|discricionaria|outra]',
+        );
+      }
+      return editCategory(deps, actor, rest.join(' '), {
+        name: options.get('nome'),
+        nature: options.get('tipo'),
+      });
+    case 'editrecorrente':
+      if (rest.length === 0) {
+        return replyOnly('Formato: /editrecorrente nome [valor=VALOR|?] [dia=N] [util=N]');
+      }
+      return editRecurring(deps, actor, rest.join(' '), {
+        amount: options.get('valor'),
+        day: options.get('dia'),
+        businessDay: options.get('util'),
+      });
+    case 'removerrecorrente':
+      if (rest.length === 0) return replyOnly('Formato: /removerrecorrente nome');
+      return removeRecurring(deps, actor, rest.join(' '));
+    case 'removerorcamento':
+      if (rest.length === 0)
+        return replyOnly('Formato: /removerorcamento categoria|total [de=Nome]');
+      return removeBudget(deps, actor, rest.join(' '), options.get('de') ?? null);
     case 'parcela_paga':
       if (!rest[0]) return replyOnly('Formato: /parcela_paga CODIGO');
       return markNextInstallmentPaid(deps, actor, rest[0]);

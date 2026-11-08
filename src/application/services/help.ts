@@ -14,7 +14,7 @@ Sem IA (sempre funciona):
 /configurar mostra o que falta cadastrar.
 /comandos lista todos os comandos.
 
-Mais detalhes: /ajuda gastos, /ajuda contas, /ajuda orcamento, /ajuda meta, /ajuda recorrentes, /ajuda opcoes`;
+Mais detalhes: /ajuda gastos, /ajuda contas, /ajuda editar, /ajuda orcamento, /ajuda meta, /ajuda recorrentes, /ajuda opcoes`;
 
 const TOPICS: Record<string, string> = {
   gastos: `Lançamentos
@@ -29,6 +29,15 @@ Estornar: /estornar a1b2c3 (pede confirmação)`,
 /transferir 500 origem para destino · /pagar_fatura 850 origem para cartao
 Sem saldo inicial eu mostro só o que foi movimentado aqui, nunca um saldo real.
 Limitação atual: mostro a dívida total do cartão, não a fatura separada por ciclo.`,
+  editar: `Editar cadastros
+/editconta Nubank fecha=3 vence=10 · /editconta Nubank saldo=1500 (saldo=? apaga)
+/editconta Nubank nome=Nubank_Felipe dono=Felipe padrao (use _ no lugar de espaço)
+/removerconta Nubank (arquiva; histórico continua)
+/editcategoria lazer nome=Passeios tipo=discricionaria
+/editrecorrente aluguel valor=1300 dia=10 · /editrecorrente salario util=5
+/removerrecorrente netflix · /removerorcamento delivery
+Limite e meta mudam pelos próprios comandos: /orcamento delivery 300, /meta prazo=12/2027.
+Lançamentos: /corrigir e /estornar.`,
   orcamento: `Orçamento mensal
 /orcamento delivery 250 · /orcamento total 3000 · /orcamento lazer 150 de=Jennifer
 /orcamento consulta · /orcamento delivery consulta uma categoria
@@ -85,6 +94,15 @@ Cadastro
 /aporte VALOR · /retirada VALOR · /desfazer_aporte CÓDIGO — dinheiro da meta
 /recorrente despesa|receita VALOR dia=N|util=N nome — conta ou receita fixa
 /renda VALOR dia=N|util=N — sua renda prevista
+
+Editar e remover
+/editconta Nome nome= saldo= fecha= vence= dono= padrao — altera conta ou cartão
+/removerconta Nome — arquiva conta (pede confirmação)
+/editcategoria codigo nome= tipo= — renomeia ou muda o tipo
+/editrecorrente nome valor= dia= util= — altera conta fixa ou renda prevista
+/removerrecorrente nome — deixa de prever o compromisso
+/removerorcamento categoria|total [de=Nome] — remove o limite
+/orcamento categoria VALOR — muda o limite · /meta campo=valor — muda a meta
 
 Sistema
 /configurar — o que falta cadastrar

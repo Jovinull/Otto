@@ -627,6 +627,113 @@ describe('consultoria', () => {
   });
 });
 
+describe('edicao de cadastros', () => {
+  interface AccountRow {
+    name: string;
+    credit_closing_day: number | null;
+    credit_due_day: number | null;
+    opening_balance_cents: number | null;
+    is_default: number;
+    archived_at: number | null;
+  }
+  const account = async (name: string) =>
+    (await h.query<AccountRow>('SELECT * FROM financial_accounts WHERE name = ?', name))[0];
+
+  it('altera dias do cartao e permite apagar', async () => {
+    await h.say('/addconta cartao Nubank fecha=3 vence=10');
+    await h.say('/editconta nubank fecha=5 vence=12');
+    expect(await account('Nubank')).toMatchObject({ credit_closing_day: 5, credit_due_day: 12 });
+    expect(h.messaging.last()).toContain('vencimento: dia 12');
+    await h.say('/editconta Nubank vence=-');
+    expect((await account('Nubank'))!.credit_due_day).toBeNull();
+    expect(await h.count('audit_events', "action = 'account.updated'")).toBe(2);
+  });
+
+  it('recusa dia invalido e dias em conta que nao e cartao', async () => {
+    await h.say('/addconta cartao Nubank vence=10');
+    await h.say('/editconta Nubank vence=32');
+    expect(h.messaging.last()).toContain('Dia inválido');
+    expect((await account('Nubank'))!.credit_due_day).toBe(10);
+    await h.say('/addconta corrente Itau');
+    await h.say('/editconta Itau vence=10');
+    expect(h.messaging.last()).toContain('só valem para cartão');
+  });
+
+  it('altera saldo inicial e os saldos derivados acompanham', async () => {
+    await h.say('/addconta corrente Itau saldo=1000');
+    await h.say('/gasto 100 mercado @Itau');
+    await h.say('/editconta Itau saldo=2000');
+    await h.say('/contas');
+    expect(h.messaging.last()).toContain('Itau: R$ 1.900,00');
+    await h.say('/editconta Itau saldo=?');
+    expect((await account('Itau'))!.opening_balance_cents).toBeNull();
+  });
+
+  it('renomeia, define dono e conta padrao sem duplicar nomes', async () => {
+    await h.say('/addconta corrente Itau padrao');
+    await h.say('/addconta corrente Nubank');
+    await h.say('/editconta Nubank nome=Itau');
+    expect(h.messaging.last()).toContain('Já existe');
+    await h.say('/editconta Nubank nome=Nubank_Felipe dono=Felipe padrao');
+    expect(await account('Nubank Felipe')).toMatchObject({ is_default: 1 });
+    expect((await account('Itau'))!.is_default).toBe(0);
+  });
+
+  it('arquivar conta pede confirmacao e preserva o historico', async () => {
+    await h.say('/addconta corrente Itau saldo=100');
+    await h.say('/gasto 10 pão');
+    await h.say('/removerconta Itau');
+    expect((await account('Itau'))!.archived_at).toBeNull();
+    await h.press(buttonData(h.messaging, 'c'));
+    expect((await account('Itau'))!.archived_at).not.toBeNull();
+    await h.say('/contas');
+    expect(h.messaging.last()).toContain('Nenhuma conta cadastrada');
+    await h.say('/resumo');
+    expect(h.messaging.last()).toContain('Saiu: R$ 10,00');
+  });
+
+  it('edita categoria', async () => {
+    await h.say('/editcategoria lazer nome=Passeios tipo=essencial');
+    const [row] = await h.query<{ name: string; nature: string }>(
+      "SELECT name, nature FROM categories WHERE slug = 'lazer'",
+    );
+    expect(row).toEqual({ name: 'Passeios', nature: 'essential' });
+  });
+
+  it('edita e remove recorrencia sem apagar pagamentos', async () => {
+    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/editrecorrente aluguel valor=1300 dia=10');
+    await h.say('/compromissos');
+    expect(h.messaging.last()).toContain('aluguel: R$ 1.300,00 (10/11)');
+    await h.say('/gasto 1300 aluguel');
+    await h.say('/removerrecorrente aluguel');
+    await h.say('/compromissos');
+    expect(h.messaging.last()).toContain('Nenhuma conta recorrente');
+    expect(await h.count('recurring_settlements')).toBe(1);
+    expect(await h.count('financial_transactions')).toBe(1);
+  });
+
+  it('remove orcamento e permite recriar', async () => {
+    await h.say('/orcamento delivery 250');
+    await h.say('/removerorcamento delivery');
+    await h.say('/orcamento');
+    expect(h.messaging.last()).toContain('Nenhum orçamento');
+    await h.say('/orcamento delivery 300');
+    expect(await h.count('budgets', 'archived_at IS NULL')).toBe(1);
+  });
+
+  it('perfil somente leitura nao edita', async () => {
+    await h.say('/addconta cartao Nubank vence=10');
+    await h.query(
+      `UPDATE household_members SET role = 'viewer' WHERE telegram_user_id = ?`,
+      JENNIFER_ID,
+    );
+    await h.say('/editconta Nubank vence=20', { from: JENNIFER_ID });
+    expect(h.messaging.last()).toContain('somente leitura');
+    expect((await account('Nubank'))!.credit_due_day).toBe(10);
+  });
+});
+
 describe('configuracao', () => {
   it('/comandos lista todos os comandos dentro do limite do Telegram', async () => {
     await h.say('/comandos');

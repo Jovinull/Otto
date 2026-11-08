@@ -10,6 +10,7 @@ import {
 } from '../commands/corrections';
 import type { PendingPayload } from '../commands/record-transactions';
 import { recordDrafts } from '../commands/record-transactions';
+import { applyArchiveAccount } from '../commands/editing';
 import type { Actor, Deps, Effect } from '../context';
 import { ledgerContext, replyOnly } from '../context';
 
@@ -49,6 +50,8 @@ async function executeConfirmation(deps: Deps, actor: Actor, row: PendingRow): P
       });
     case 'void_transaction':
       return applyVoid(deps, actor, payload.transactionId, [resolution]);
+    case 'archive_account':
+      return applyArchiveAccount(deps, actor, payload.accountId, [resolution]);
     case 'void_contribution':
       return applyContributionVoid(deps, actor, payload.contributionId, [resolution]);
     case 'correct_transaction': {

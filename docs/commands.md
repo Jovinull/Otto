@@ -52,6 +52,19 @@ O CODIGO aparece em cada confirmação (`#a1b2c3`) e em `/ultimos`.
 | `/recorrente despesa\|receita VALOR [dia=N\|util=N] nome [de=Nome]`    | `/recorrente despesa 1200 dia=5 aluguel` · use `?` para valor variável                                            |
 | `/renda VALOR dia=N\|util=N`                                           | `/renda 4200 util=5`                                                                                              |
 
+## Editar e remover
+
+| Comando                                                                 | Exemplo                                                                                                                                                    |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/editconta Nome [nome=] [saldo=] [fecha=] [vence=] [dono=] [padrao]`   | `/editconta Nubank fecha=5 vence=12` · `vence=-` apaga · `saldo=?` volta a desconhecido · `nome=Nubank_Felipe` (use `_` no lugar de espaço) · `dono=casal` |
+| `/removerconta Nome`                                                    | arquiva após confirmação; histórico e totais continuam                                                                                                     |
+| `/editcategoria codigo [nome=] [tipo=essencial\|discricionaria\|outra]` | `/editcategoria lazer nome=Passeios`                                                                                                                       |
+| `/editrecorrente nome [valor=] [dia=\|util=]`                           | `/editrecorrente aluguel valor=1300 dia=10` · `valor=?` para variável                                                                                      |
+| `/removerrecorrente nome`                                               | deixa de prever; pagamentos já registrados continuam                                                                                                       |
+| `/removerorcamento categoria\|total [de=Nome]`                          | `/removerorcamento delivery`                                                                                                                               |
+
+Limite de orçamento e campos da meta mudam com os próprios `/orcamento` e `/meta`. Lançamentos mudam com `/corrigir` e `/estornar`.
+
 ## Preferências (administradores)
 
 | Comando                                                          | Efeito               |

@@ -36,7 +36,7 @@ import {
 } from './record-transactions';
 import { auditStatement } from './shared';
 
-function findMember(actor: Actor, text: string | null) {
+export function findMember(actor: Actor, text: string | null) {
   if (!text) return null;
   const first = normalizeText(text).split(' ')[0];
   return actor.scope.members.find((m) => normalizeText(m.name).split(' ')[0] === first) ?? null;
@@ -407,7 +407,7 @@ export interface CommitmentInput {
   categoryText: string | null;
 }
 
-function normalizedRecurringName(description: string): string {
+export function normalizedRecurringName(description: string): string {
   return normalizeText(description)
     .replace(/[^a-z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
