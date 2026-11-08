@@ -25,7 +25,13 @@ import type { Actor, Deps, Effect, Reply } from '../context';
 import { ledgerContext, replyOnly } from '../context';
 import type { BudgetView, ExtraExpense } from '../queries/finance';
 import { loadBudgetViews, shortId } from '../queries/finance';
-import { budgetNudge, registeredOpener, thresholdLabel } from '../services/tone';
+import {
+  budgetNudge,
+  incomeOpener,
+  registeredOpener,
+  thresholdLabel,
+  transferOpener,
+} from '../services/tone';
 import { auditStatement } from './shared';
 
 export const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
@@ -542,7 +548,14 @@ export async function recordDrafts(
   const budget = await budgetFollowUp(deps, actor, items, actor.eventId);
   statements.push(...settlement.statements, ...budget.statements);
 
-  const opener = registeredOpener(actor.scope.settings.tone, actor.eventId);
+  const { tone } = actor.scope.settings;
+  const types = new Set(items.map((i) => i.transaction.type));
+  const opener =
+    types.size === 1 && types.has('income')
+      ? incomeOpener(tone, actor.eventId)
+      : types.size === 1 && types.has('transfer')
+        ? transferOpener(tone)
+        : registeredOpener(tone, actor.eventId);
   const lines =
     items.length === 1
       ? [`${opener}: ${transactionLine(actor, items[0]!.transaction, items[0]!.id)}`]

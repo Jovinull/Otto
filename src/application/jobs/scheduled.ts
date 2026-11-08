@@ -15,6 +15,7 @@ import {
   formatShortDate,
   localClock,
   monthName,
+  monthRange,
   periodOf,
   weekRange,
 } from '../../shared/dates';
@@ -24,7 +25,7 @@ import { alertStatementsFor } from '../commands/record-transactions';
 import type { Deps, Scope } from '../context';
 import { loadScope } from '../context';
 import { cashFlow, loadBudgetViews, loadCommitments, loadGoals } from '../queries/finance';
-import { goalReport, monthReport, weekReport } from '../queries/reports';
+import { goalReport, monthReport, periodObservations, weekReport } from '../queries/reports';
 import { findDueEvents, processEvent } from '../services/inbox';
 import { thresholdLabel } from '../services/tone';
 import { cardStatement } from '../queries/cards';
@@ -145,23 +146,52 @@ async function weeklySummary(deps: Deps, scope: Scope, clock: LocalClock): Promi
   const flow = await cashFlow(deps.db, scope.household.id, previousWeek);
   if (flow.expenseCents === 0 && flow.incomeCents === 0) return [];
   const text = await weekReport(deps, scope, previousWeek.from);
-  return [enqueue(deps, scope, `weekly:${scope.household.id}:${previousWeek.from}`, `🗓️ ${text}`)];
+  const observations = await periodObservations(
+    deps,
+    scope,
+    previousWeek,
+    weekRange(addDays(previousWeek.from, -7)),
+  );
+  return [
+    enqueue(
+      deps,
+      scope,
+      `weekly:${scope.household.id}:${previousWeek.from}`,
+      [`🗓️ ${text}`, ...observations].join('\n'),
+    ),
+  ];
 }
 
 async function monthlyClosing(deps: Deps, scope: Scope, clock: LocalClock): Promise<Stmt[]> {
   const previous = addMonths(periodOf(clock.date), -1);
-  const text = await monthReport(deps, scope, previous);
-  const flow = await cashFlow(deps.db, scope.household.id, {
-    from: `${previous}-01`,
-    to: `${previous}-31`,
-  });
+  const range = monthRange(previous);
+  const flow = await cashFlow(deps.db, scope.household.id, range);
   if (flow.expenseCents === 0 && flow.incomeCents === 0) return [];
+  const text = await monthReport(deps, scope, previous);
+  const observations = await periodObservations(
+    deps,
+    scope,
+    range,
+    monthRange(addMonths(previous, -1)),
+  );
+  const goal = (await loadGoals(deps.db, scope.household.id, range.to)).find(
+    (g) => g.kind === 'apartment',
+  );
+  const planned = goal?.progress.plannedMonthlyCents;
+  if (goal && planned) {
+    const saved = goal.progress.confirmedThisMonthCents;
+    observations.push(
+      saved > 0
+        ? `Apartamento: guardaram ${formatBRL(saved)} de ${formatBRL(planned)} pretendidos.`
+        : `Apartamento: nenhum aporte registrado no mês (pretendido ${formatBRL(planned)}). Se guardaram, registrem com /aporte.`,
+    );
+  }
   return [
     enqueue(
       deps,
       scope,
       `monthly:${scope.household.id}:${previous}`,
-      `📘 Fechamento de ${monthName(previous)}\n${text}`,
+      [`📘 Fechamento de ${monthName(previous)}`, text, ...observations].join('\n'),
     ),
   ];
 }

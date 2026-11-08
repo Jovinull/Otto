@@ -306,6 +306,50 @@ async function periodReport(
   return lines.join('\n');
 }
 
+/**
+ * Observacoes curtas para os fechamentos. Cada frase sai de um numero calculado; sem base
+ * comparavel, nao ha comparacao.
+ */
+export async function periodObservations(
+  deps: Deps,
+  scope: Scope,
+  current: DateRange,
+  previous: DateRange,
+): Promise<string[]> {
+  const [now, before] = await Promise.all([
+    expensesByCategory(deps.db, scope.household.id, current),
+    expensesByCategory(deps.db, scope.household.id, previous),
+  ]);
+  const total = now.reduce((sum, row) => sum + row.totalCents, 0);
+  if (total === 0) return [];
+  const lines: string[] = [];
+  const top = now[0]!;
+  lines.push(
+    `O que mais pesou: ${top.name} (${formatBRL(top.totalCents)}, ${percentOf(top.totalCents, total)}% das despesas).`,
+  );
+  const previousTotal = before.reduce((sum, row) => sum + row.totalCents, 0);
+  if (previousTotal > 0) {
+    const rise = now
+      .map((row) => {
+        const old = before.find((b) => b.categoryId === row.categoryId)?.totalCents ?? 0;
+        return { row, old, change: old > 0 ? Math.trunc(((row.totalCents - old) * 100) / old) : 0 };
+      })
+      .filter((item) => item.old >= 2_000 && item.change >= 20)
+      .sort((a, b) => b.change - a.change)[0];
+    if (rise) {
+      lines.push(
+        `${rise.row.name} subiu ${rise.change}% em relação ao período anterior (${formatBRL(rise.old)} → ${formatBRL(rise.row.totalCents)}).`,
+      );
+    }
+    if (total < previousTotal) {
+      lines.push(
+        `No total, ${formatBRL(previousTotal - total)} a menos que no período anterior${scope.settings.tone === 'friendly' ? '. 👏' : '.'}`,
+      );
+    }
+  }
+  return lines;
+}
+
 export function weekReport(deps: Deps, scope: Scope, today: LocalDate): Promise<string> {
   const range = weekRange(today);
   return periodReport(

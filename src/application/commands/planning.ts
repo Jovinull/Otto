@@ -28,7 +28,7 @@ import { formatBRL, parseBRL } from '../../shared/money';
 import { normalizeText } from '../../shared/text';
 import type { Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
-import { loadBudgetViews, shortId, sumExpenses } from '../queries/finance';
+import { loadBudgetViews, loadGoals, shortId, sumExpenses } from '../queries/finance';
 import {
   alertStatementsFor,
   createPendingStatement,
@@ -352,14 +352,35 @@ export async function addGoalContribution(
     }),
   ];
   const verb = direction === 'in' ? 'Aporte confirmado' : 'Retirada confirmada';
-  return {
-    statements,
-    replies: [
-      {
-        text: `${verb}: ${formatBRL(parsed.cents)} na meta ${goal.name} (${formatDate(date.date)}). Desfazer: /desfazer_aporte ${shortId(contributionId)}`,
-      },
-    ],
-  };
+  const [view] = (await loadGoals(deps.db, actor.scope.household.id, actor.today)).filter(
+    (g) => g.id === goal.id,
+  );
+  const lines = [
+    `${verb}: ${formatBRL(parsed.cents)} na meta ${goal.name} (${formatDate(date.date)}).`,
+  ];
+  if (view) {
+    const signed = direction === 'in' ? parsed.cents : -parsed.cents;
+    const saved = view.progress.confirmedCents + signed;
+    const target = view.progress.targetCents;
+    lines.push(
+      target
+        ? `Agora são ${formatBRL(saved)} de ${formatBRL(target)} (${Math.min(Math.floor((Math.max(saved, 0) * 100) / target), 100)}%).`
+        : `Agora são ${formatBRL(saved)} guardados. Defina o alvo com /meta entrada=VALOR.`,
+    );
+    const planned = view.progress.plannedMonthlyCents;
+    const month =
+      view.progress.confirmedThisMonthCents +
+      (periodOf(date.date) === periodOf(actor.today) ? signed : 0);
+    if (planned && direction === 'in') {
+      lines.push(
+        month >= planned
+          ? `Meta do mês batida: ${formatBRL(month)} de ${formatBRL(planned)} pretendidos. 👏`
+          : `No mês: ${formatBRL(month)} de ${formatBRL(planned)} pretendidos.`,
+      );
+    }
+  }
+  lines.push(`Desfazer: /desfazer_aporte ${shortId(contributionId)}`);
+  return { statements, replies: [{ text: lines.join('\n') }] };
 }
 
 export async function requestContributionVoid(

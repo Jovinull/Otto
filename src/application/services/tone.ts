@@ -14,6 +14,17 @@ export function registeredOpener(tone: Tone, seed: string): string {
   return 'Registrado';
 }
 
+export function incomeOpener(tone: Tone, seed: string): string {
+  if (tone === 'friendly') {
+    return pick(['Entrou 🎉', 'Entrada anotada', 'Oba, anotado 💰'], seed);
+  }
+  return 'Receita registrada';
+}
+
+export function transferOpener(tone: Tone): string {
+  return tone === 'friendly' ? 'Movimentação anotada' : 'Registrado';
+}
+
 const PERCENT_TO_MENTION = 70;
 
 /** Observacao sobre o orcamento apos um gasto. Numeros vem sempre do calculo no backend. */
