@@ -26,10 +26,10 @@ import type { Deps, Scope } from '../context';
 import { loadScope } from '../context';
 import { cashFlow, loadBudgetViews, loadCommitments, loadGoals } from '../queries/finance';
 import { goalReport, monthReport, periodObservations, weekReport } from '../queries/reports';
-import { findDueEvents, processEvent } from '../services/inbox';
+import { dueEventsQuery, processEvent } from '../services/inbox';
 import { thresholdLabel } from '../services/tone';
 import { cardStatement } from '../queries/cards';
-import { deliverDueMessages } from './outbox';
+import { deliverDueMessages, dueDeliveriesQuery } from './outbox';
 import { canStartEvent, hasBudget } from '../../infrastructure/database/metered';
 
 const DAILY_HOUR = 9;
@@ -41,8 +41,16 @@ const EVENTS_PER_RUN = 4;
 const DELIVERIES_PER_RUN = 10;
 
 export async function runRecovery(deps: Deps): Promise<void> {
-  const due = await findDueEvents(deps, EVENTS_PER_RUN);
-  for (const eventId of due) {
+  // No caso comum nao ha trabalho: uma unica chamada ao banco responde as duas perguntas.
+  const [due, deliveries] = await deps.db.batch([
+    dueEventsQuery(deps, EVENTS_PER_RUN),
+    dueDeliveriesQuery(deps, DELIVERIES_PER_RUN),
+  ]);
+  if (due.length === 0) {
+    await deliverDueMessages(deps, DELIVERIES_PER_RUN, deliveries);
+    return;
+  }
+  for (const { id: eventId } of due) {
     if (!canStartEvent(deps.meter)) break;
     try {
       await processEvent(deps, eventId);

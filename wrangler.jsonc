@@ -29,6 +29,7 @@
   "env": {
     "production": {
       "name": "otto",
+      "minify": true,
       "workers_dev": true,
       "preview_urls": false,
       // Os Cron Triggers operam em UTC. O job horario converte para o fuso do Household.

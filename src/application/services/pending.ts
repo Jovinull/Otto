@@ -119,7 +119,7 @@ export async function handlePendingReply(
   actor: Actor,
   text: string,
 ): Promise<Effect | null> {
-  const row = await latestPending(deps, actor);
+  const row = actor.latestPending;
   if (!row || !canWrite(actor.member)) return null;
   const payload = parsePayload(row);
 

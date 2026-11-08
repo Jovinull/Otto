@@ -1,5 +1,5 @@
 import { eq, inArray } from 'drizzle-orm';
-import { z } from 'zod';
+import * as z from 'zod';
 import { DEFAULT_CATEGORIES } from '../../domain/finance/categories';
 import type { Stmt } from '../../infrastructure/database/client';
 import { commitAtomically } from '../../infrastructure/database/client';

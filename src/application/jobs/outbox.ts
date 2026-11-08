@@ -52,14 +52,13 @@ async function markTerminal(
     .where(eq(outgoingMessages.id, id));
 }
 
-/**
- * Entrega as respostas pendentes. A entrega e pelo menos uma vez: se o processo cair depois do
- * Telegram aceitar e antes de marcar como enviada, a mensagem pode repetir. O lancamento nao.
- */
-export async function deliverDueMessages(deps: Deps, limit: number): Promise<void> {
-  if (!deps.messaging || !canDeliver(deps.meter)) return;
+export interface DueDelivery {
+  id: string;
+}
+
+export function dueDeliveriesQuery(deps: Deps, limit: number) {
   const now = deps.now();
-  const due = await deps.db
+  return deps.db
     .select({ id: outgoingMessages.id })
     .from(outgoingMessages)
     .where(
@@ -73,6 +72,20 @@ export async function deliverDueMessages(deps: Deps, limit: number): Promise<voi
     )
     .orderBy(outgoingMessages.createdAt)
     .limit(limit);
+}
+
+/**
+ * Entrega as respostas pendentes. A entrega e pelo menos uma vez: se o processo cair depois do
+ * Telegram aceitar e antes de marcar como enviada, a mensagem pode repetir. O lancamento nao.
+ * `known` evita uma consulta quando a lista ja veio junto de outra chamada ao banco.
+ */
+export async function deliverDueMessages(
+  deps: Deps,
+  limit: number,
+  known?: DueDelivery[],
+): Promise<void> {
+  if (!deps.messaging || !canDeliver(deps.meter)) return;
+  const due = known ?? (await dueDeliveriesQuery(deps, limit));
 
   for (const { id } of due) {
     if (!canDeliver(deps.meter)) return;

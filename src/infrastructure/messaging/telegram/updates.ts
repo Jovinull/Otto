@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import type { InboundEvent } from '../gateway';
 
 const User = z.object({ id: z.number().int(), is_bot: z.boolean().optional() });

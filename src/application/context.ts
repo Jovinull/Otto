@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 import type { AppConfig } from '../config/env';
 import type { LedgerContext } from '../domain/finance/transactions';
 import type { HouseholdSettings } from '../domain/household/settings';
@@ -11,6 +11,7 @@ import {
   financialAccounts,
   householdMembers,
   households,
+  pendingActions,
 } from '../infrastructure/database/schema';
 import type { InlineButton, MessagingGateway } from '../infrastructure/messaging/gateway';
 import type { LocalDate } from '../shared/dates';
@@ -30,6 +31,7 @@ export type Household = typeof households.$inferSelect;
 export type Member = typeof householdMembers.$inferSelect;
 export type Account = typeof financialAccounts.$inferSelect;
 export type Category = typeof categories.$inferSelect;
+export type PendingAction = typeof pendingActions.$inferSelect;
 
 /** Tudo que define o escopo de um Household. Consultas sempre filtram por household.id. */
 export interface Scope {
@@ -48,6 +50,8 @@ export interface Actor {
   eventId: string;
   /** Data local no momento em que a mensagem foi enviada. */
   today: LocalDate;
+  /** Confirmacao ou pergunta mais recente do remetente, ainda valida. */
+  latestPending: PendingAction | null;
 }
 
 export interface Reply {
@@ -66,8 +70,8 @@ export const replyOnly = (text: string, buttons?: InlineButton[][]): Effect => (
   replies: [buttons ? { text, buttons } : { text }],
 });
 
-export async function loadScope(db: Db, householdId: string): Promise<Scope | null> {
-  const [householdRows, memberRows, accountRows, categoryRows] = await db.batch([
+function scopeQueries(db: Db, householdId: string) {
+  return [
     db.select().from(households).where(eq(households.id, householdId)),
     db.select().from(householdMembers).where(eq(householdMembers.householdId, householdId)),
     db
@@ -80,7 +84,15 @@ export async function loadScope(db: Db, householdId: string): Promise<Scope | nu
       .select()
       .from(categories)
       .where(and(eq(categories.householdId, householdId), isNull(categories.archivedAt))),
-  ]);
+  ] as const;
+}
+
+function buildScope([householdRows, memberRows, accountRows, categoryRows]: readonly [
+  Household[],
+  Member[],
+  Account[],
+  Category[],
+]): Scope | null {
   const household = householdRows[0];
   if (!household) return null;
   return {
@@ -89,6 +101,50 @@ export async function loadScope(db: Db, householdId: string): Promise<Scope | nu
     members: memberRows,
     accounts: accountRows,
     categories: categoryRows,
+  };
+}
+
+export async function loadScope(db: Db, householdId: string): Promise<Scope | null> {
+  return buildScope(await db.batch(scopeQueries(db, householdId)));
+}
+
+/** Escopo e pendencia do remetente numa unica chamada ao banco. */
+export async function loadScopeWithPending(
+  db: Db,
+  householdId: string,
+  senderTelegramId: string,
+  now: number,
+): Promise<{ scope: Scope | null; latestPending: PendingAction | null }> {
+  const [householdRows, memberRows, accountRows, categoryRows, pendingRows] = await db.batch([
+    ...scopeQueries(db, householdId),
+    db
+      .select()
+      .from(pendingActions)
+      .where(
+        and(
+          eq(pendingActions.householdId, householdId),
+          eq(pendingActions.status, 'pending'),
+          gt(pendingActions.expiresAt, now),
+          inArray(
+            pendingActions.memberId,
+            db
+              .select({ id: householdMembers.id })
+              .from(householdMembers)
+              .where(
+                and(
+                  eq(householdMembers.householdId, householdId),
+                  eq(householdMembers.telegramUserId, senderTelegramId),
+                ),
+              ),
+          ),
+        ),
+      )
+      .orderBy(desc(pendingActions.createdAt))
+      .limit(1),
+  ]);
+  return {
+    scope: buildScope([householdRows, memberRows, accountRows, categoryRows]),
+    latestPending: pendingRows[0] ?? null,
   };
 }
 

@@ -60,29 +60,45 @@ export interface SpendSummary {
   monthMicroUsd: number;
 }
 
-export async function aiSpend(deps: Deps): Promise<SpendSummary> {
+function spendQuery(deps: Deps) {
   const now = deps.now();
-  const [row] = await deps.db
+  return deps.db
     .select({
       dayMicroUsd: sql<number>`coalesce(sum(case when ${aiUsage.createdAt} >= ${startOfUtcDay(now)} then ${aiUsage.estimatedCostMicroUsd} else 0 end), 0)`,
       monthMicroUsd: sql<number>`coalesce(sum(${aiUsage.estimatedCostMicroUsd}), 0)`,
     })
     .from(aiUsage)
     .where(gte(aiUsage.createdAt, startOfUtcMonth(now)));
+}
+
+export async function aiSpend(deps: Deps): Promise<SpendSummary> {
+  const [row] = await spendQuery(deps);
   return row ?? { dayMicroUsd: 0, monthMicroUsd: 0 };
 }
 
 export type Allowance =
-  { allowed: true } | { allowed: false; reason: 'daily' | 'monthly'; retryAt: number };
+  | { allowed: true }
+  | { allowed: false; reason: 'daily' | 'monthly' | 'rate_limited'; retryAt: number };
 
-export async function checkInterpretAllowance(deps: Deps): Promise<Allowance> {
-  const spend = await aiSpend(deps);
+/** Limites de custo e de frequencia consultados numa unica chamada ao banco. */
+export async function checkInterpretGate(deps: Deps, memberId: string): Promise<Allowance> {
   const now = deps.now();
+  const [spendRows, recentRows] = await deps.db.batch([
+    spendQuery(deps),
+    deps.db
+      .select({ count: sql<number>`count(*)` })
+      .from(aiUsage)
+      .where(and(eq(aiUsage.memberId, memberId), gte(aiUsage.createdAt, now - 60_000))),
+  ]);
+  const spend = spendRows[0] ?? { dayMicroUsd: 0, monthMicroUsd: 0 };
   if (spend.monthMicroUsd >= deps.config.monthlyBudgetMicroUsd) {
     return { allowed: false, reason: 'monthly', retryAt: startOfNextUtcMonth(now) + 300_000 };
   }
   if (spend.dayMicroUsd >= deps.config.dailyBudgetMicroUsd) {
     return { allowed: false, reason: 'daily', retryAt: startOfUtcDay(now) + DAY_MS + 300_000 };
+  }
+  if ((recentRows[0]?.count ?? 0) >= deps.config.maxAiCallsPerMemberPerMinute) {
+    return { allowed: false, reason: 'rate_limited', retryAt: now + 90_000 };
   }
   return { allowed: true };
 }
@@ -94,12 +110,4 @@ export async function canRunAnalysis(deps: Deps): Promise<boolean> {
     spend.dayMicroUsd * 100 < dailyBudgetMicroUsd * ANALYSIS_BUDGET_SHARE_PERCENT &&
     spend.monthMicroUsd * 100 < monthlyBudgetMicroUsd * ANALYSIS_BUDGET_SHARE_PERCENT
   );
-}
-
-export async function isRateLimited(deps: Deps, memberId: string): Promise<boolean> {
-  const [row] = await deps.db
-    .select({ count: sql<number>`count(*)` })
-    .from(aiUsage)
-    .where(and(eq(aiUsage.memberId, memberId), gte(aiUsage.createdAt, deps.now() - 60_000)));
-  return (row?.count ?? 0) >= deps.config.maxAiCallsPerMemberPerMinute;
 }

@@ -261,6 +261,15 @@ describe('limite de subrequisicoes do plano gratuito', () => {
     expect(costs.ia_analise).toBeLessThanOrEqual(3 + 34 + 3);
   });
 
+  it('mantem baixo o numero de chamadas ao banco nos caminhos mais frequentes', async () => {
+    // Cada chamada custa de 1 a 2 ms de CPU em producao.
+    await h.say('bom dia');
+    expect(h.deps.meter.count).toBeLessThanOrEqual(6);
+
+    await runRecovery(h.fresh());
+    expect(h.deps.meter.count).toBe(1);
+  });
+
   it('fila acumulada e drenada em varias invocacoes sem estourar o limite', async () => {
     for (let i = 1; i <= 12; i++) {
       await enqueue(1000 + i, `/orcamento lazer ${i}00`, { receivedAgoMs: 1_000 });

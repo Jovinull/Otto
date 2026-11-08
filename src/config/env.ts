@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 
 /** Segredos cadastrados via `wrangler secret put` ou `.dev.vars`; ausentes ate o deploy. */
 export interface Secrets {

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 
 export const Tone = z.enum(['neutral', 'friendly', 'firm']);
 export type Tone = z.infer<typeof Tone>;

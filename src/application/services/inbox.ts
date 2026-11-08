@@ -12,16 +12,17 @@ import {
 import type { InboundEvent, OutgoingMessage } from '../../infrastructure/messaging/gateway';
 import { toLocalDate } from '../../shared/dates';
 import { errorCode, logEvent, PermanentError, RetryableError } from '../../shared/errors';
-import type { Actor, Deps, Effect, Reply, Scope } from '../context';
-import { loadScope } from '../context';
+import type { Actor, Deps, Effect, Reply } from '../context';
+import { loadScopeWithPending } from '../context';
 import { findTransactionsByMessage, shortId } from '../queries/finance';
-import { checkInterpretAllowance, isRateLimited, recordUsage } from './ai-governor';
+import { checkInterpretGate, recordUsage } from './ai-governor';
 import { handleCommand } from './command-router';
 import { routeIntent } from './intent-router';
 import { mentionsAssistant, shouldInterpret } from './message-filter';
 import { handleButton, handlePendingReply } from './pending';
 import { aiBudgetNotice, aiUnavailableNotice } from './tone';
-import { deliverDueMessages } from '../jobs/outbox';
+import type { DueDelivery } from '../jobs/outbox';
+import { deliverDueMessages, dueDeliveriesQuery } from '../jobs/outbox';
 import { canStartEvent } from '../../infrastructure/database/metered';
 
 export const MAX_EVENT_ATTEMPTS = 9;
@@ -37,6 +38,7 @@ const LEASE_MS = 60_000;
 export const HEAD_OF_LINE_MS = 180_000;
 /** Eventos extras do mesmo chat drenados na mesma invocacao. */
 const DRAIN_LIMIT = 4;
+const DELIVERIES_AFTER_EVENT = 5;
 const BACKOFF_MS = [
   30_000, 120_000, 600_000, 1_800_000, 3_600_000, 10_800_000, 21_600_000, 43_200_000,
 ];
@@ -57,10 +59,18 @@ export type IngestResult =
   | { status: 'ignored'; reason: string }
   | { status: 'identify'; message: OutgoingMessage };
 
-async function findHouseholdByChat(db: Db, chatId: string) {
+/** Grupo e remetente numa unica consulta; remetente fora da casa volta como null. */
+async function findHouseholdAndSender(db: Db, chatId: string, senderId: string) {
   const rows = await db
-    .select()
+    .select({ household: households, member: householdMembers })
     .from(households)
+    .leftJoin(
+      householdMembers,
+      and(
+        eq(householdMembers.householdId, households.id),
+        eq(householdMembers.telegramUserId, senderId),
+      ),
+    )
     .where(eq(households.telegramChatId, chatId))
     .limit(1);
   return rows[0] ?? null;
@@ -91,13 +101,14 @@ function isIdCommand(text: string | null): boolean {
 export async function ingestEvent(deps: Deps, event: InboundEvent): Promise<IngestResult> {
   if (event.senderIsBot) return { status: 'ignored', reason: 'bot_sender' };
 
-  const household = await findHouseholdByChat(deps.db, event.chatId);
-  if (!household) {
+  const found = await findHouseholdAndSender(deps.db, event.chatId, event.senderId);
+  if (!found) {
     if (isIdCommand(event.text) && !(await hasAnyHousehold(deps.db))) {
       return { status: 'identify', message: identifyMessage(event) };
     }
     return { status: 'ignored', reason: 'unknown_chat' };
   }
+  const { household, member } = found;
 
   if (event.migrateToChatId) {
     await deps.db
@@ -108,17 +119,7 @@ export async function ingestEvent(deps: Deps, event: InboundEvent): Promise<Inge
     return { status: 'ignored', reason: 'chat_migrated' };
   }
 
-  const members = await deps.db
-    .select()
-    .from(householdMembers)
-    .where(
-      and(
-        eq(householdMembers.householdId, household.id),
-        eq(householdMembers.telegramUserId, event.senderId),
-      ),
-    )
-    .limit(1);
-  if (!isAuthorizedSender(household.telegramChatId, event.chatId, members[0])) {
+  if (!isAuthorizedSender(household.telegramChatId, event.chatId, member ?? undefined)) {
     return { status: 'ignored', reason: 'unauthorized_sender' };
   }
   if (event.kind !== 'callback_query' && event.text === null) {
@@ -348,12 +349,12 @@ async function interpretWithAi(
   if (!deps.ai) {
     throw new RetryableError('ai_not_configured');
   }
-  const allowance = await checkInterpretAllowance(deps);
-  if (!allowance.allowed) {
-    throw new DeferProcessing(allowance.retryAt, `ai_budget_${allowance.reason}`, aiBudgetNotice());
-  }
-  if (await isRateLimited(deps, actor.member.id)) {
-    throw new DeferProcessing(deps.now() + 90_000, 'rate_limited', null);
+  const gate = await checkInterpretGate(deps, actor.member.id);
+  if (!gate.allowed) {
+    if (gate.reason === 'rate_limited') {
+      throw new DeferProcessing(gate.retryAt, 'rate_limited', null);
+    }
+    throw new DeferProcessing(gate.retryAt, `ai_budget_${gate.reason}`, aiBudgetNotice());
   }
 
   const result = await deps.ai.interpret({
@@ -455,7 +456,12 @@ async function dedupEditedNotice(deps: Deps, event: EventRow, effect: Effect): P
 
 async function resolveActor(deps: Deps, event: EventRow): Promise<Actor | null> {
   if (!event.householdId) return null;
-  const scope: Scope | null = await loadScope(deps.db, event.householdId);
+  const { scope, latestPending } = await loadScopeWithPending(
+    deps.db,
+    event.householdId,
+    event.senderTelegramId,
+    deps.now(),
+  );
   if (!scope) return null;
   const member = scope.members.find((m) => m.telegramUserId === event.senderTelegramId);
   // Autoriza de novo no processamento: o acesso pode ter sido revogado apos o recebimento.
@@ -467,6 +473,7 @@ async function resolveActor(deps: Deps, event: EventRow): Promise<Actor | null> 
     messageId: event.kind === 'callback_query' ? null : event.messageId,
     eventId: event.id,
     today: toLocalDate(event.messageDate * 1000, scope.household.timezone),
+    latestPending,
   };
 }
 
@@ -506,18 +513,25 @@ export async function processEvent(deps: Deps, eventId: string): Promise<void> {
       // Outro processo assumiu o evento; ele conclui. Nada foi gravado aqui.
       logEvent('warn', 'lease_lost');
     }
-    await drainLane(deps, event.chatId);
+    const known = await drainLane(deps, event.chatId);
+    await deliverDueMessages(deps, DELIVERIES_AFTER_EVENT, known);
+    return;
   }
-  await deliverDueMessages(deps, 5);
+  await deliverDueMessages(deps, DELIVERIES_AFTER_EVENT);
 }
 
 /** Segue para os proximos eventos do mesmo chat, em ordem, enquanto houver orcamento. */
-async function drainLane(deps: Deps, chatId: string): Promise<void> {
+async function drainLane(deps: Deps, chatId: string): Promise<DueDelivery[] | undefined> {
   for (let i = 0; i < DRAIN_LIMIT && canStartEvent(deps.meter); i++) {
-    const [next] = await findDueEvents(deps, 1, chatId);
-    if (!next) return;
-    const event = await claimEvent(deps, next);
-    if (!event) return;
+    // Proximo evento e entregas pendentes vem na mesma chamada ao banco.
+    const [events, deliveries] = await deps.db.batch([
+      dueEventsQuery(deps, 1, chatId),
+      dueDeliveriesQuery(deps, DELIVERIES_AFTER_EVENT),
+    ]);
+    const next = events[0];
+    if (!next) return deliveries;
+    const event = await claimEvent(deps, next.id);
+    if (!event) return deliveries;
     try {
       await processClaimed(deps, event);
     } catch (error) {
@@ -525,6 +539,7 @@ async function drainLane(deps: Deps, chatId: string): Promise<void> {
       logEvent('warn', 'lease_lost');
     }
   }
+  return undefined;
 }
 
 async function processClaimed(deps: Deps, event: EventRow): Promise<void> {
@@ -585,9 +600,9 @@ async function processClaimed(deps: Deps, event: EventRow): Promise<void> {
 }
 
 /** Eventos prontos, na ordem de update_id. Com chatId, apenas os daquele chat. */
-export async function findDueEvents(deps: Deps, limit: number, chatId?: string): Promise<string[]> {
+export function dueEventsQuery(deps: Deps, limit: number, chatId?: string) {
   const now = deps.now();
-  const rows = await deps.db
+  return deps.db
     .select({ id: incomingEvents.id })
     .from(incomingEvents)
     .where(
@@ -604,5 +619,4 @@ export async function findDueEvents(deps: Deps, limit: number, chatId?: string):
     )
     .orderBy(incomingEvents.updateId)
     .limit(limit);
-  return rows.map((row) => row.id);
 }
