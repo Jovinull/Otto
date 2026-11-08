@@ -34,6 +34,7 @@ O CODIGO aparece em cada confirmação (`#a1b2c3`) e em `/ultimos`.
 | `/categorias`                 | Categorias e códigos                                                  |
 | `/analise [pergunta]`         | Análise do mês (IA com números verificados, ou relatório puro)        |
 | `/configurar`                 | O que já foi cadastrado e o que falta                                 |
+| `/comandos`                   | Lista todos os comandos com uma descrição curta                       |
 | `/ia`                         | Consumo estimado de IA no dia e no mês                                |
 | `/status`                     | Fila, IA configurada, fuso                                            |
 | `/id`                         | IDs do chat e do usuário (antes do bootstrap, responde a qualquer um) |

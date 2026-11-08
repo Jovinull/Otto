@@ -628,6 +628,25 @@ describe('consultoria', () => {
 });
 
 describe('configuracao', () => {
+  it('/comandos lista todos os comandos dentro do limite do Telegram', async () => {
+    await h.say('/comandos');
+    const text = h.messaging.last();
+    for (const command of [
+      '/gasto',
+      '/transferir',
+      '/pagar_fatura',
+      '/estornar',
+      '/addconta',
+      '/meta',
+      '/recorrente',
+      '/notificacoes',
+      '/ajuda',
+    ]) {
+      expect(text).toContain(command);
+    }
+    expect(text.length).toBeLessThan(4096);
+  });
+
   it('checklist identifica o que falta sem bloquear lancamentos', async () => {
     await h.say('/configurar');
     expect(h.messaging.last()).toContain('⬜ Contas');

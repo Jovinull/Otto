@@ -12,6 +12,7 @@ Sem IA (sempre funciona):
 /orcamento · /metas · /contas · /compromissos · /parcelas
 /ultimos · /corrigir · /estornar
 /configurar mostra o que falta cadastrar.
+/comandos lista todos os comandos.
 
 Mais detalhes: /ajuda gastos, /ajuda contas, /ajuda orcamento, /ajuda meta, /ajuda recorrentes, /ajuda opcoes`;
 
@@ -48,6 +49,53 @@ Nada é marcado como pago sozinho: avise com "paguei o aluguel, 1200".`,
 /categorias · /addcategoria Nome essencial|discricionaria|outra
 /ia mostra o consumo estimado · /status mostra a saúde do sistema`,
 };
+
+const COMMANDS_TEXT = `Todos os comandos (funcionam sem IA):
+
+Lançamentos
+/gasto VALOR descrição — registra despesa
+/receita VALOR descrição — registra receita
+/transferir VALOR origem para destino — move entre contas
+/pagar_fatura VALOR conta para cartão — paga fatura
+/corrigir CÓDIGO valor|categoria|data NOVO — corrige lançamento
+/estornar CÓDIGO — anula lançamento (pede confirmação)
+/parcela_data CÓDIGO DD/MM/AAAA — 1º vencimento do parcelamento
+/parcela_paga CÓDIGO — quita a próxima parcela
+
+Consultas
+/resumo ou /mes [MM/AAAA] — resumo do mês
+/semana — semana atual
+/comparar — mês atual vs anterior
+/individual — gastos por pessoa
+/contas — saldos conhecidos e cartões
+/compromissos — contas a pagar e renda prevista
+/orcamento [categoria] — situação dos orçamentos
+/metas — meta do apartamento
+/parcelas — parcelamentos ativos
+/ultimos [N] — últimos lançamentos com código
+/categorias — categorias e códigos
+/analise [pergunta] — análise do mês
+
+Cadastro
+/addconta tipo Nome [saldo=] [padrao] [fecha=] [vence=] — cria conta ou cartão
+/padrao Conta — sua conta padrão
+/addcategoria Nome essencial|discricionaria|outra — cria categoria
+/orcamento categoria VALOR [de=Nome] — define limite mensal
+/meta entrada= custos= prazo=MM/AAAA aporte= reserva= inicial= — configura a meta
+/aporte VALOR · /retirada VALOR · /desfazer_aporte CÓDIGO — dinheiro da meta
+/recorrente despesa|receita VALOR dia=N|util=N nome — conta ou receita fixa
+/renda VALOR dia=N|util=N — sua renda prevista
+
+Sistema
+/configurar — o que falta cadastrar
+/tom neutro|amigavel|firme — estilo das respostas (admin)
+/notificacoes on|off — avisos automáticos (admin)
+/ia — consumo de IA · /status — saúde do Otto · /id — seus IDs
+/ajuda TEMA — exemplos detalhados`;
+
+export function commandsText(): string {
+  return COMMANDS_TEXT;
+}
 
 export function helpText(topic: string | null): string {
   if (!topic) return MAIN_HELP;

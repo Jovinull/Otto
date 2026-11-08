@@ -46,7 +46,7 @@ import {
 } from '../queries/reports';
 import { analysisAnswer } from './advisor';
 import { aiSpend } from './ai-governor';
-import { helpText, onboardingChecklist } from './help';
+import { commandsText, helpText, onboardingChecklist } from './help';
 
 interface ParsedOptions {
   options: Map<string, string>;
@@ -209,6 +209,8 @@ export async function handleCommand(
     case 'start':
     case 'help':
       return replyOnly(helpText(rest[0] ?? null));
+    case 'comandos':
+      return replyOnly(commandsText());
     case 'id':
       return replyOnly(`Chat ID: ${actor.chatId}\nSeu user ID: ${actor.member.telegramUserId}`);
     case 'status':
