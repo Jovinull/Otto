@@ -24,7 +24,8 @@ if (!process.argv.includes('--info')) {
       url: `${settings.OTTO_BASE_URL}/webhook/telegram`,
       secret_token: settings.TELEGRAM_WEBHOOK_SECRET,
       allowed_updates: ['message', 'edited_message', 'callback_query'],
-      max_connections: 5,
+      // Uma conexao: o Telegram entrega um update por vez, o que preserva a ordem de chegada.
+      max_connections: 1,
     }),
   });
   const result = await response.json();

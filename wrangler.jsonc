@@ -32,7 +32,7 @@
       "workers_dev": true,
       "preview_urls": false,
       // Os Cron Triggers operam em UTC. O job horario converte para o fuso do Household.
-      "triggers": { "crons": ["*/2 * * * *", "0 * * * *"] },
+      "triggers": { "crons": ["* * * * *", "0 * * * *"] },
       "vars": {
         "APP_ENV": "production",
         "OPENAI_MODEL_FAST": "gpt-6-luna",

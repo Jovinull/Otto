@@ -4,15 +4,22 @@ import type { Bindings } from './config/env';
 import { loadConfig } from './config/env';
 import { OpenAiClient } from './infrastructure/ai/client';
 import { createDb } from './infrastructure/database/client';
+import type { Meter } from './infrastructure/database/metered';
+import { meteredFetch, meterD1 } from './infrastructure/database/metered';
 import { TelegramClient } from './infrastructure/messaging/telegram/client';
 import { createApp } from './interfaces/http/routes';
 
 export function createDeps(env: Bindings): Deps {
   const config = loadConfig(env);
+  const meter: Meter = { count: 0 };
+  const fetcher = meteredFetch(meter);
   return {
-    db: createDb(env.DB),
-    messaging: config.telegramBotToken ? new TelegramClient(config.telegramBotToken) : null,
-    ai: config.openAiApiKey ? new OpenAiClient(config, config.openAiApiKey) : null,
+    db: createDb(meterD1(env.DB, meter)),
+    messaging: config.telegramBotToken
+      ? new TelegramClient(config.telegramBotToken, fetcher)
+      : null,
+    ai: config.openAiApiKey ? new OpenAiClient(config, config.openAiApiKey, fetcher) : null,
+    meter,
     config,
     now: () => Date.now(),
     newId: () => crypto.randomUUID(),

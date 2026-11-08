@@ -3,6 +3,7 @@ import { outgoingMessages } from '../../infrastructure/database/schema';
 import type { InlineButton } from '../../infrastructure/messaging/gateway';
 import { errorCode, logEvent, PermanentError, RetryableError } from '../../shared/errors';
 import type { Deps } from '../context';
+import { canDeliver } from '../../infrastructure/database/metered';
 
 export const MAX_DELIVERY_ATTEMPTS = 8;
 const LEASE_MS = 30_000;
@@ -56,7 +57,7 @@ async function markTerminal(
  * Telegram aceitar e antes de marcar como enviada, a mensagem pode repetir. O lancamento nao.
  */
 export async function deliverDueMessages(deps: Deps, limit: number): Promise<void> {
-  if (!deps.messaging) return;
+  if (!deps.messaging || !canDeliver(deps.meter)) return;
   const now = deps.now();
   const due = await deps.db
     .select({ id: outgoingMessages.id })
@@ -74,6 +75,7 @@ export async function deliverDueMessages(deps: Deps, limit: number): Promise<voi
     .limit(limit);
 
   for (const { id } of due) {
+    if (!canDeliver(deps.meter)) return;
     const row = await claim(deps, id);
     if (!row?.text) continue;
     try {

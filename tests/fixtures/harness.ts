@@ -8,6 +8,8 @@ import { loadConfig } from '../../src/config/env';
 import type { AiClient, AiResult, AiUsageSample } from '../../src/infrastructure/ai/client';
 import type { Interpretation } from '../../src/infrastructure/ai/interpretation';
 import { createDb } from '../../src/infrastructure/database/client';
+import type { Meter } from '../../src/infrastructure/database/metered';
+import { meterD1 } from '../../src/infrastructure/database/metered';
 import type { MessagingGateway, OutgoingMessage } from '../../src/infrastructure/messaging/gateway';
 import { createApp } from '../../src/interfaces/http/routes';
 
@@ -23,16 +25,19 @@ export const ADMIN_TOKEN = 'test-admin-token';
 export const DEFAULT_NOW = Date.UTC(2026, 10, 10, 15, 0, 0);
 
 export class FakeMessaging implements MessagingGateway {
+  meter: Meter = { count: 0 };
   sent: OutgoingMessage[] = [];
   failure: Error | null = null;
   acknowledged: string[] = [];
 
   async sendMessage(message: OutgoingMessage): Promise<void> {
+    this.meter.count += 1;
     if (this.failure) throw this.failure;
     this.sent.push(message);
   }
 
   async acknowledgeButton(callbackId: string): Promise<void> {
+    this.meter.count += 1;
     this.acknowledged.push(callbackId);
   }
 
@@ -54,13 +59,18 @@ const usage = (operation: AiUsageSample['operation'] = 'interpret'): AiUsageSamp
 });
 
 export class FakeAi implements AiClient {
+  meter: Meter = { count: 0 };
+  /** Executado durante a chamada, para simular eventos concorrentes. */
+  duringCall: (() => Promise<void>) | null = null;
   calls: string[] = [];
   analysisCalls = 0;
   nextInterpretation: Interpretation | Error | { invalid: true } | null = null;
   analysisText: string | Error = 'Tudo sob controle.';
 
   async interpret(input: { text: string }): Promise<AiResult<Interpretation>> {
+    this.meter.count += 1;
     this.calls.push(input.text);
+    if (this.duringCall) await this.duringCall();
     const next = this.nextInterpretation;
     if (next instanceof Error) throw next;
     if (next && 'invalid' in next) return { ok: false, reason: 'invalid_output', usage: usage() };
@@ -68,6 +78,7 @@ export class FakeAi implements AiClient {
   }
 
   async writeAnalysis(): Promise<AiResult<string>> {
+    this.meter.count += 1;
     this.analysisCalls += 1;
     if (this.analysisText instanceof Error) throw this.analysisText;
     return { ok: true, value: this.analysisText, usage: usage('analysis') };
@@ -132,6 +143,8 @@ const TABLES = [
 
 export interface Harness {
   deps: Deps;
+  /** Deps com o medidor zerado, como numa invocacao nova do Cron. */
+  fresh(): Deps;
   messaging: FakeMessaging;
   ai: FakeAi;
   setNow(value: number): void;
@@ -162,7 +175,8 @@ export async function createHarness(
   options: { withAi?: boolean; bootstrap?: boolean } = {},
 ): Promise<Harness> {
   const bindings = env as unknown as Bindings;
-  const db = createDb(bindings.DB);
+  const meter: Meter = { count: 0 };
+  const db = createDb(meterD1(bindings.DB, meter));
   for (const table of TABLES) {
     await db.run(sql.raw(`DELETE FROM ${table}`));
   }
@@ -170,6 +184,8 @@ export async function createHarness(
   let clock = DEFAULT_NOW;
   const messaging = new FakeMessaging();
   const ai = new FakeAi();
+  messaging.meter = meter;
+  ai.meter = meter;
   const deps: Deps = {
     db,
     messaging,
@@ -177,10 +193,13 @@ export async function createHarness(
     config: loadConfig(bindings),
     now: () => clock,
     newId: () => crypto.randomUUID(),
+    meter,
   };
   const app = createApp(() => deps);
 
   async function post(path: string, init: RequestInit): Promise<Response> {
+    // Cada requisicao e uma invocacao nova: o medidor recomeca.
+    meter.count = 0;
     const ctx = createExecutionContext();
     const response = await app.fetch(new Request(`https://otto.test${path}`, init), bindings, ctx);
     await waitOnExecutionContext(ctx);
@@ -201,6 +220,10 @@ export async function createHarness(
 
   const harness: Harness = {
     deps,
+    fresh: () => {
+      meter.count = 0;
+      return deps;
+    },
     messaging,
     ai,
     setNow: (value) => {

@@ -28,6 +28,7 @@ import { goalReport, monthReport, weekReport } from '../queries/reports';
 import { findDueEvents, processEvent } from '../services/inbox';
 import { thresholdLabel } from '../services/tone';
 import { deliverDueMessages } from './outbox';
+import { canStartEvent, hasBudget } from '../../infrastructure/database/metered';
 
 const DAILY_HOUR = 9;
 const WEEKLY_HOUR = 8;
@@ -40,6 +41,7 @@ const DELIVERIES_PER_RUN = 10;
 export async function runRecovery(deps: Deps): Promise<void> {
   const due = await findDueEvents(deps, EVENTS_PER_RUN);
   for (const eventId of due) {
+    if (!canStartEvent(deps.meter)) break;
     try {
       await processEvent(deps, eventId);
     } catch (error) {
@@ -229,6 +231,6 @@ export async function runHourly(deps: Deps, instant: number): Promise<void> {
       logEvent('error', 'proactive_failed', { code: errorCode(error) });
     }
   }
-  await purgeExpired(deps);
+  if (hasBudget(deps.meter)) await purgeExpired(deps);
   await deliverDueMessages(deps, DELIVERIES_PER_RUN);
 }

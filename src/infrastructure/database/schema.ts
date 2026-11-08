@@ -339,6 +339,8 @@ export const incomingEvents = sqliteTable(
     attempts: integer('attempts').notNull().default(0),
     nextAttemptAt: integer('next_attempt_at').notNull(),
     leaseUntil: integer('lease_until'),
+    // Identifica o dono do lease: so ele pode concluir o evento.
+    leaseToken: text('lease_token'),
     lastErrorCode: text('last_error_code'),
     noticeSent: integer('notice_sent', { mode: 'boolean' }).notNull().default(false),
     receivedAt: integer('received_at').notNull(),
@@ -346,6 +348,7 @@ export const incomingEvents = sqliteTable(
   },
   (t) => [
     index('event_queue_idx').on(t.status, t.nextAttemptAt),
+    index('event_lane_idx').on(t.chatId, t.updateId),
     uniqueIndex('event_message_uq')
       .on(t.chatId, t.messageId)
       .where(sql`${t.kind} = 'message' AND ${t.messageId} IS NOT NULL`),
@@ -414,4 +417,17 @@ export const aiUsage = sqliteTable(
     index('ai_usage_created_idx').on(t.createdAt),
     index('ai_usage_member_idx').on(t.memberId, t.createdAt),
   ],
+);
+
+/**
+ * Tabela que nunca aceita linhas. Inserir nela aborta a transacao do D1: e assim que um
+ * processamento que perdeu o lease desiste sem gravar nada.
+ */
+export const leaseGuard = sqliteTable(
+  'lease_guard',
+  {
+    eventId: text('event_id').notNull(),
+    reason: text('reason').notNull(),
+  },
+  (t) => [check('lease_guard_owner_only', sql`${t.reason} = 'never'`)],
 );

@@ -5,6 +5,7 @@ import type { HouseholdSettings } from '../domain/household/settings';
 import { parseHouseholdSettings, parseMemberPreferences } from '../domain/household/settings';
 import type { AiClient } from '../infrastructure/ai/client';
 import type { Db, Stmt } from '../infrastructure/database/client';
+import type { Meter } from '../infrastructure/database/metered';
 import {
   categories,
   financialAccounts,
@@ -21,6 +22,8 @@ export interface Deps {
   config: AppConfig;
   now: () => number;
   newId: () => string;
+  /** Subrequisicoes ja feitas nesta invocacao (D1 + fetch). */
+  meter: Meter;
 }
 
 export type Household = typeof households.$inferSelect;

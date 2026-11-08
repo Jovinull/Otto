@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { isAuthorizedSender } from '../../domain/household/authorization';
 import type { Db, Stmt } from '../../infrastructure/database/client';
 import { commitAtomically } from '../../infrastructure/database/client';
@@ -6,6 +6,7 @@ import {
   householdMembers,
   households,
   incomingEvents,
+  leaseGuard,
   outgoingMessages,
 } from '../../infrastructure/database/schema';
 import type { InboundEvent, OutgoingMessage } from '../../infrastructure/messaging/gateway';
@@ -21,10 +22,21 @@ import { mentionsAssistant, shouldInterpret } from './message-filter';
 import { handleButton, handlePendingReply } from './pending';
 import { aiBudgetNotice, aiUnavailableNotice } from './tone';
 import { deliverDueMessages } from '../jobs/outbox';
+import { canStartEvent } from '../../infrastructure/database/metered';
 
 export const MAX_EVENT_ATTEMPTS = 9;
 export const MAX_AI_TEXT_LENGTH = 800;
 const LEASE_MS = 60_000;
+/**
+ * Politica de ordem por chat: eventos sao processados um de cada vez, na ordem de update_id
+ * (sequencia global do bot, que cobre mensagens, edicoes e botoes; message_id so ordena
+ * mensagens). Um evento anterior ainda pendente bloqueia os seguintes por ate este intervalo;
+ * depois disso deixa de bloquear, para uma falha prolongada (ex.: IA fora) nao travar o chat.
+ * Eventos adiados por limite de custo (deferred) esperam horas de proposito e nao bloqueiam.
+ */
+export const HEAD_OF_LINE_MS = 180_000;
+/** Eventos extras do mesmo chat drenados na mesma invocacao. */
+const DRAIN_LIMIT = 4;
 const BACKOFF_MS = [
   30_000, 120_000, 600_000, 1_800_000, 3_600_000, 10_800_000, 21_600_000, 43_200_000,
 ];
@@ -143,14 +155,34 @@ export async function ingestEvent(deps: Deps, event: InboundEvent): Promise<Inge
   return inserted.length === 0 ? { status: 'duplicate' } : { status: 'stored', eventId };
 }
 
+/**
+ * Claim atomico (um UPDATE no D1). Alem de o evento estar disponivel, exige:
+ * 1. nenhum outro evento do mesmo chat em processamento com lease valido (trava da lane);
+ * 2. nenhum evento anterior do chat ainda pendente dentro da janela de ordem.
+ */
 async function claimEvent(deps: Deps, eventId: string): Promise<EventRow | null> {
   const now = deps.now();
+  const laneIsFree = sql`NOT EXISTS (
+    SELECT 1 FROM incoming_events AS other
+    WHERE other.chat_id = incoming_events.chat_id
+      AND other.id <> incoming_events.id
+      AND other.status = 'processing'
+      AND other.lease_until > ${now}
+  )`;
+  const noEarlierPending = sql`NOT EXISTS (
+    SELECT 1 FROM incoming_events AS earlier
+    WHERE earlier.chat_id = incoming_events.chat_id
+      AND earlier.update_id < incoming_events.update_id
+      AND earlier.status IN ('received', 'retry', 'processing')
+      AND earlier.received_at > ${now - HEAD_OF_LINE_MS}
+  )`;
   const rows = await deps.db
     .update(incomingEvents)
     .set({
       status: 'processing',
       attempts: sql`${incomingEvents.attempts} + 1`,
       leaseUntil: now + LEASE_MS,
+      leaseToken: deps.newId(),
     })
     .where(
       and(
@@ -160,11 +192,48 @@ async function claimEvent(deps: Deps, eventId: string): Promise<EventRow | null>
           inArray(incomingEvents.status, ['received', 'retry', 'deferred']),
           and(eq(incomingEvents.status, 'processing'), lte(incomingEvents.leaseUntil, now)),
         ),
+        laneIsFree,
+        noEarlierPending,
       ),
     )
     .returning();
   return rows[0] ?? null;
 }
+
+/**
+ * Primeiro comando de toda transacao de conclusao. Se outro processo assumiu o evento (lease
+ * expirado), a insercao na lease_guard viola o CHECK e o D1 desfaz o lote inteiro.
+ */
+function ownershipGuard(deps: Deps, event: EventRow): Stmt {
+  return deps.db.insert(leaseGuard).select(
+    deps.db
+      .select({ eventId: incomingEvents.id, reason: sql<string>`'lease_lost'`.as('reason') })
+      .from(incomingEvents)
+      .where(
+        and(
+          eq(incomingEvents.id, event.id),
+          or(
+            ne(incomingEvents.status, 'processing'),
+            isNull(incomingEvents.leaseToken),
+            ne(incomingEvents.leaseToken, event.leaseToken ?? ''),
+          ),
+        ),
+      ),
+  );
+}
+
+function isLeaseLost(error: unknown): boolean {
+  const texts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; current instanceof Error && depth < 4; depth++) {
+    texts.push(current.message);
+    current = current.cause;
+  }
+  return texts.some((text) => text.includes('lease_guard_owner_only'));
+}
+
+const ownedBy = (event: EventRow) =>
+  and(eq(incomingEvents.id, event.id), eq(incomingEvents.leaseToken, event.leaseToken ?? ''));
 
 function outboxStatements(
   deps: Deps,
@@ -192,7 +261,7 @@ function outboxStatements(
 
 function finalizeStatement(
   deps: Deps,
-  eventId: string,
+  event: EventRow,
   status: 'processed' | 'ignored' | 'failed',
   code: string | null,
 ): Stmt {
@@ -202,10 +271,11 @@ function finalizeStatement(
       status,
       payload: null,
       leaseUntil: null,
+      leaseToken: null,
       lastErrorCode: code,
       processedAt: deps.now(),
     })
-    .where(eq(incomingEvents.id, eventId));
+    .where(ownedBy(event));
 }
 
 async function reschedule(
@@ -221,17 +291,19 @@ async function reschedule(
 ): Promise<void> {
   const notify = options.notice !== null && !event.noticeSent;
   await commitAtomically(deps.db, [
+    ownershipGuard(deps, event),
     deps.db
       .update(incomingEvents)
       .set({
         status: options.status,
         nextAttemptAt: options.nextAttemptAt,
         leaseUntil: null,
+        leaseToken: null,
         lastErrorCode: options.code,
         noticeSent: event.noticeSent || notify,
         ...(options.refundAttempt && { attempts: sql`${incomingEvents.attempts} - 1` }),
       })
-      .where(eq(incomingEvents.id, event.id)),
+      .where(ownedBy(event)),
     ...(notify ? outboxStatements(deps, event, [{ text: options.notice! }], 'notice') : []),
   ]);
 }
@@ -409,7 +481,8 @@ function parseStored(event: EventRow): StoredPayload | null {
 
 async function failEvent(deps: Deps, event: EventRow, code: string): Promise<void> {
   await commitAtomically(deps.db, [
-    finalizeStatement(deps, event.id, 'failed', code),
+    ownershipGuard(deps, event),
+    finalizeStatement(deps, event, 'failed', code),
     ...outboxStatements(
       deps,
       event,
@@ -425,8 +498,36 @@ async function failEvent(deps: Deps, event: EventRow, code: string): Promise<voi
  */
 export async function processEvent(deps: Deps, eventId: string): Promise<void> {
   const event = await claimEvent(deps, eventId);
-  if (!event) return;
+  if (event) {
+    try {
+      await processClaimed(deps, event);
+    } catch (error) {
+      if (!isLeaseLost(error)) throw error;
+      // Outro processo assumiu o evento; ele conclui. Nada foi gravado aqui.
+      logEvent('warn', 'lease_lost');
+    }
+    await drainLane(deps, event.chatId);
+  }
+  await deliverDueMessages(deps, 5);
+}
 
+/** Segue para os proximos eventos do mesmo chat, em ordem, enquanto houver orcamento. */
+async function drainLane(deps: Deps, chatId: string): Promise<void> {
+  for (let i = 0; i < DRAIN_LIMIT && canStartEvent(deps.meter); i++) {
+    const [next] = await findDueEvents(deps, 1, chatId);
+    if (!next) return;
+    const event = await claimEvent(deps, next);
+    if (!event) return;
+    try {
+      await processClaimed(deps, event);
+    } catch (error) {
+      if (!isLeaseLost(error)) throw error;
+      logEvent('warn', 'lease_lost');
+    }
+  }
+}
+
+async function processClaimed(deps: Deps, event: EventRow): Promise<void> {
   if (event.attempts > MAX_EVENT_ATTEMPTS) {
     await failEvent(deps, event, 'max_attempts');
     return;
@@ -438,7 +539,8 @@ export async function processEvent(deps: Deps, eventId: string): Promise<void> {
     actor = await resolveActor(deps, event);
     if (!payload || !actor) {
       await commitAtomically(deps.db, [
-        finalizeStatement(deps, event.id, 'ignored', 'not_authorized'),
+        ownershipGuard(deps, event),
+        finalizeStatement(deps, event, 'ignored', 'not_authorized'),
       ]);
       return;
     }
@@ -446,14 +548,16 @@ export async function processEvent(deps: Deps, eventId: string): Promise<void> {
     const effect = await dispatch(deps, event, actor, payload);
     const replies = await dedupEditedNotice(deps, event, effect);
     await commitAtomically(deps.db, [
+      ownershipGuard(deps, event),
       ...effect.statements,
       ...replies,
-      finalizeStatement(deps, event.id, 'processed', null),
+      finalizeStatement(deps, event, 'processed', null),
     ]);
     if (payload.callbackId && deps.messaging) {
       await deps.messaging.acknowledgeButton(payload.callbackId).catch(() => undefined);
     }
   } catch (error) {
+    if (isLeaseLost(error)) throw error;
     const code = errorCode(error);
     logEvent('warn', 'event_processing_failed', { code, attempts: event.attempts });
     if (error instanceof DeferProcessing) {
@@ -478,24 +582,27 @@ export async function processEvent(deps: Deps, eventId: string): Promise<void> {
       });
     }
   }
-  await deliverDueMessages(deps, 5);
 }
 
-export async function findDueEvents(deps: Deps, limit: number): Promise<string[]> {
+/** Eventos prontos, na ordem de update_id. Com chatId, apenas os daquele chat. */
+export async function findDueEvents(deps: Deps, limit: number, chatId?: string): Promise<string[]> {
   const now = deps.now();
   const rows = await deps.db
     .select({ id: incomingEvents.id })
     .from(incomingEvents)
     .where(
-      or(
-        and(
-          inArray(incomingEvents.status, ['received', 'retry', 'deferred']),
-          lte(incomingEvents.nextAttemptAt, now),
+      and(
+        chatId === undefined ? undefined : eq(incomingEvents.chatId, chatId),
+        or(
+          and(
+            inArray(incomingEvents.status, ['received', 'retry', 'deferred']),
+            lte(incomingEvents.nextAttemptAt, now),
+          ),
+          and(eq(incomingEvents.status, 'processing'), lte(incomingEvents.leaseUntil, now)),
         ),
-        and(eq(incomingEvents.status, 'processing'), lte(incomingEvents.leaseUntil, now)),
       ),
     )
-    .orderBy(incomingEvents.receivedAt)
+    .orderBy(incomingEvents.updateId)
     .limit(limit);
   return rows.map((row) => row.id);
 }

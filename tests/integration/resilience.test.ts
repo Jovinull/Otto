@@ -48,12 +48,12 @@ describe('OpenAI indisponivel', () => {
     expect(h.messaging.last()).toContain('Nada foi registrado ainda');
 
     advance(60_000);
-    await runRecovery(h.deps);
+    await runRecovery(h.fresh());
     expect(h.messaging.sent).toHaveLength(1);
 
     h.ai.nextInterpretation = expense();
     advance(HOUR);
-    await runRecovery(h.deps);
+    await runRecovery(h.fresh());
     expect(await h.count('financial_transactions')).toBe(1);
     expect((await eventStatus()).status).toBe('processed');
     expect(h.messaging.last()).toContain('R$ 27,00');
@@ -64,7 +64,7 @@ describe('OpenAI indisponivel', () => {
     await h.say('Gastei 27 reais com Uber');
     h.ai.nextInterpretation = expense();
     h.setNow(DEFAULT_NOW + 2 * 86_400_000);
-    await runRecovery(h.deps);
+    await runRecovery(h.fresh());
     const [row] = await h.query<{ financial_date: string }>(
       'SELECT financial_date FROM financial_transactions',
     );
@@ -97,7 +97,7 @@ describe('OpenAI indisponivel', () => {
     await h.say('gastei 27');
     for (let i = 0; i < MAX_EVENT_ATTEMPTS + 1; i++) {
       advance(13 * HOUR);
-      await runRecovery(h.deps);
+      await runRecovery(h.fresh());
     }
     expect((await eventStatus()).status).toBe('failed');
     expect(h.messaging.last()).toContain('nada foi registrado');
@@ -234,7 +234,7 @@ describe('Telegram indisponivel', () => {
 
     h.messaging.failure = null;
     advance(HOUR);
-    await runRecovery(h.deps);
+    await runRecovery(h.fresh());
     expect(await h.count('financial_transactions')).toBe(1);
     expect(h.messaging.sent).toHaveLength(1);
     expect(await h.count('outgoing_messages', "status = 'sent'")).toBe(1);
@@ -252,7 +252,7 @@ describe('Telegram indisponivel', () => {
     await h.say('/gasto 27 Uber');
     for (let i = 0; i < MAX_DELIVERY_ATTEMPTS; i++) {
       advance(3 * HOUR);
-      await deliverDueMessages(h.deps, 5);
+      await deliverDueMessages(h.fresh(), 5);
     }
     expect(await h.count('outgoing_messages', "status = 'failed'")).toBe(1);
   });
@@ -318,11 +318,11 @@ describe('recuperacao de eventos', () => {
       h.now() + 60_000,
       h.now(),
     );
-    await runRecovery(h.deps);
+    await runRecovery(h.fresh());
     expect(await h.count('financial_transactions')).toBe(0);
 
     advance(61_000);
-    await runRecovery(h.deps);
+    await runRecovery(h.fresh());
     expect(await h.count('financial_transactions')).toBe(1);
     expect(h.messaging.last()).toContain('R$ 15,00');
   });
@@ -330,7 +330,7 @@ describe('recuperacao de eventos', () => {
     h.messaging.failure = new RetryableError('telegram_network');
     await h.say('/gasto 27 Uber');
     const [event] = await h.query<{ id: string }>('SELECT id FROM incoming_events');
-    await Promise.all([processEvent(h.deps, event!.id), processEvent(h.deps, event!.id)]);
+    await Promise.all([processEvent(h.fresh(), event!.id), processEvent(h.fresh(), event!.id)]);
     expect(await h.count('financial_transactions')).toBe(1);
   });
 
@@ -353,7 +353,7 @@ describe('recuperacao de eventos', () => {
     expect(await h.count('incoming_events', "status = 'retry'")).toBe(1);
 
     advance(HOUR);
-    await runRecovery(h.deps);
+    await runRecovery(h.fresh());
     expect(await h.count('financial_transactions')).toBe(1);
     expect(await h.count('budget_alerts')).toBe(1);
   });
@@ -444,7 +444,7 @@ describe('limites de custo', () => {
     expect(await h.count('financial_transactions')).toBe(1);
 
     h.setNow(Date.UTC(2026, 10, 11, 0, 10));
-    await runRecovery(h.deps);
+    await runRecovery(h.fresh());
     expect(h.ai.calls).toHaveLength(1);
     expect(await h.count('financial_transactions')).toBe(2);
   });
@@ -516,10 +516,10 @@ describe('mensagens proativas', () => {
     h.setNow(MONDAY_9AM);
     await h.say('/recorrente despesa 110 dia=12 internet');
     h.messaging.sent = [];
-    await runHourly(h.deps, MONDAY_9AM);
+    await runHourly(h.fresh(), MONDAY_9AM);
     expect(h.messaging.last()).toContain('internet');
     const total = h.messaging.sent.length;
-    await runHourly(h.deps, MONDAY_9AM + HOUR);
+    await runHourly(h.fresh(), MONDAY_9AM + HOUR);
     expect(h.messaging.sent.length).toBe(total);
   });
 
@@ -528,7 +528,7 @@ describe('mensagens proativas', () => {
     h.setNow(earlyUtc);
     await h.say('/recorrente despesa 110 dia=12 internet');
     h.messaging.sent = [];
-    await runHourly(h.deps, earlyUtc);
+    await runHourly(h.fresh(), earlyUtc);
     expect(h.messaging.sent).toHaveLength(0);
   });
 
@@ -537,21 +537,21 @@ describe('mensagens proativas', () => {
     await h.say('/recorrente despesa 110 dia=12 internet');
     await h.say('/gasto 110 internet');
     h.messaging.sent = [];
-    await runHourly(h.deps, MONDAY_9AM);
+    await runHourly(h.fresh(), MONDAY_9AM);
     expect(h.messaging.texts().join()).not.toContain('Contas chegando');
   });
 
   it('resumo semanal sai uma vez e so com dados', async () => {
     h.setNow(MONDAY_9AM);
-    await runHourly(h.deps, MONDAY_9AM);
+    await runHourly(h.fresh(), MONDAY_9AM);
     expect(h.messaging.sent).toHaveLength(0);
 
     h.setNow(MONDAY_9AM - 3 * 86_400_000);
     await h.say('/gasto 50 mercado');
     h.setNow(MONDAY_9AM);
     h.messaging.sent = [];
-    await runHourly(h.deps, MONDAY_9AM);
-    await runHourly(h.deps, MONDAY_9AM + HOUR);
+    await runHourly(h.fresh(), MONDAY_9AM);
+    await runHourly(h.fresh(), MONDAY_9AM + HOUR);
     const weekly = h.messaging.texts().filter((t) => t.includes('Semana de'));
     expect(weekly).toHaveLength(1);
     expect(weekly[0]).toContain('R$ 50,00');
@@ -563,8 +563,8 @@ describe('mensagens proativas', () => {
     await h.say('/gasto 200 mercado');
     h.setNow(dayOne);
     h.messaging.sent = [];
-    await runHourly(h.deps, dayOne);
-    await runHourly(h.deps, dayOne + HOUR);
+    await runHourly(h.fresh(), dayOne);
+    await runHourly(h.fresh(), dayOne + HOUR);
     const closing = h.messaging.texts().filter((t) => t.includes('Fechamento de novembro/2026'));
     expect(closing).toHaveLength(1);
   });
@@ -574,7 +574,7 @@ describe('mensagens proativas', () => {
     h.setNow(day15);
     await h.say('/meta entrada=80000');
     h.messaging.sent = [];
-    await runHourly(h.deps, day15);
+    await runHourly(h.fresh(), day15);
     expect(h.messaging.last()).toContain('Apartamento');
   });
 
@@ -584,7 +584,7 @@ describe('mensagens proativas', () => {
     await h.say('/gasto 85 ifood');
     expect(await h.count('budget_alerts')).toBe(1);
     h.messaging.sent = [];
-    await runHourly(h.deps, MONDAY_9AM);
+    await runHourly(h.fresh(), MONDAY_9AM);
     expect(h.messaging.texts().join()).not.toContain('Orçamento:');
     expect(await h.count('budget_alerts')).toBe(1);
   });
@@ -594,7 +594,7 @@ describe('mensagens proativas', () => {
     await h.say('/recorrente despesa 110 dia=12 internet');
     await h.say('/notificacoes off');
     h.messaging.sent = [];
-    await runHourly(h.deps, MONDAY_9AM);
+    await runHourly(h.fresh(), MONDAY_9AM);
     expect(h.messaging.sent).toHaveLength(0);
   });
 
@@ -606,7 +606,7 @@ describe('mensagens proativas', () => {
 
     const later = h.now() + 91 * 86_400_000;
     h.setNow(later);
-    await runHourly(h.deps, later);
+    await runHourly(h.fresh(), later);
     expect(await h.count('pending_actions', "status = 'expired'")).toBe(1);
     expect(await h.count('incoming_events')).toBe(0);
     expect(await h.count('outgoing_messages')).toBe(0);
@@ -624,8 +624,8 @@ describe('mensagens proativas', () => {
   it('roteia cron pelo identificador', async () => {
     const controller = createScheduledController({ cron: HOURLY_CRON, scheduledTime: MONDAY_9AM });
     await expect(
-      handleScheduled(h.deps, controller.cron, controller.scheduledTime),
+      handleScheduled(h.fresh(), controller.cron, controller.scheduledTime),
     ).resolves.toBeUndefined();
-    await expect(handleScheduled(h.deps, '*/2 * * * *', MONDAY_9AM)).resolves.toBeUndefined();
+    await expect(handleScheduled(h.fresh(), '*/2 * * * *', MONDAY_9AM)).resolves.toBeUndefined();
   });
 });
