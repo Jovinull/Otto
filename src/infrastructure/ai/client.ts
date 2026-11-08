@@ -4,7 +4,10 @@ import { Interpretation, interpretationJsonSchema } from './interpretation';
 import { ANALYSIS_INSTRUCTIONS, INTERPRET_INSTRUCTIONS } from './prompts';
 
 export interface AiUsageSample {
+  /** Modelo pedido (base do custo estimado). */
   model: string;
+  /** Modelo informado pela API na resposta (pode ser um snapshot datado). */
+  servedModel?: string | null;
   operation: 'interpret' | 'analysis';
   inputTokens: number;
   cachedInputTokens: number;
@@ -30,6 +33,7 @@ const TIMEOUT_MS = 20_000;
 const MAX_REPLY_CONTEXT = 300;
 
 interface ResponsesPayload {
+  model?: string;
   status?: string;
   output?: { type: string; content?: { type: string; text?: string }[] }[];
   usage?: {
@@ -127,17 +131,23 @@ export class OpenAiClient implements AiClient {
       throw new RetryableError(isTimeout ? 'ai_timeout' : 'ai_network');
     }
     if (!response.ok) {
-      await response.body?.cancel();
+      const detail = await response
+        .json<{ error?: { message?: string } }>()
+        .then((body) => body.error?.message?.slice(0, 300))
+        .catch(() => undefined);
       // 401/403/404 sao configuracao errada, nao culpa da mensagem: ela fica na fila.
-      if (response.status === 429) throw new RetryableError('ai_rate_limited');
-      if (response.status >= 500) throw new RetryableError(`ai_${response.status}`);
-      throw new RetryableError(`ai_rejected_${response.status}`);
+      if (response.status === 429) throw new RetryableError('ai_rate_limited', undefined, detail);
+      if (response.status >= 500) {
+        throw new RetryableError(`ai_${response.status}`, undefined, detail);
+      }
+      throw new RetryableError(`ai_rejected_${response.status}`, undefined, detail);
     }
     const payload = await response.json<ResponsesPayload>().catch(() => null);
     if (!payload) throw new RetryableError('ai_bad_gateway_body');
 
     const usage: AiUsageSample = {
       model: options.model,
+      servedModel: payload.model ?? null,
       operation: options.operation,
       inputTokens: payload.usage?.input_tokens ?? 0,
       cachedInputTokens: payload.usage?.input_tokens_details?.cached_tokens ?? 0,

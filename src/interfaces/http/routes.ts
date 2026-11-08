@@ -101,6 +101,7 @@ export function createApp(createDeps: DepsFactory) {
   const admin = new Hono<{ Bindings: Bindings }>();
   admin.use('*', async (c, next) => {
     if (!(await isAdmin(createDeps(c.env), c.req.header('authorization')))) {
+      logEvent('warn', 'admin_auth_failed', { path: c.req.path });
       return c.json({ ok: false }, 401);
     }
     return next();
@@ -136,6 +137,8 @@ export function createApp(createDeps: DepsFactory) {
 
   admin.get('/export', async (c) => {
     const deps = createDeps(c.env);
+    if (!deps.config.allowExport) return c.json({ ok: false, error: 'export_disabled' }, 403);
+    logEvent('warn', 'admin_export');
     const rows = await deps.db.select({ id: households.id }).from(households).limit(1);
     if (!rows[0]) return c.json({ ok: false, error: 'not_bootstrapped' }, 404);
     return c.json(await exportHousehold(deps, rows[0].id));
@@ -143,6 +146,7 @@ export function createApp(createDeps: DepsFactory) {
 
   admin.post('/erase', async (c) => {
     const deps = createDeps(c.env);
+    if (!deps.config.allowErase) return c.json({ ok: false, error: 'erase_disabled' }, 403);
     const input = EraseInput.safeParse(await c.req.json().catch(() => null));
     const rows = await deps.db.select().from(households).limit(1);
     if (!rows[0]) return c.json({ ok: false, error: 'not_bootstrapped' }, 404);

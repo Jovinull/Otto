@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapHousehold } from '../../src/application/commands/bootstrap';
+import { RetryableError } from '../../src/shared/errors';
 import type { Harness } from '../fixtures/harness';
 import {
   buttonData,
@@ -369,14 +370,29 @@ describe('prompt injection e saida de modelo nao confiavel', () => {
 });
 
 describe('exportacao e exclusao', () => {
-  it('exporta os dados', async () => {
+  it('ficam desligadas por padrao mesmo com o token de admin', async () => {
+    await h.say('/gasto 10 pão');
+    const exported = await h.admin('/export');
+    expect(exported.status).toBe(403);
+    expect(await exported.text()).not.toContain('pão');
+    const erased = await h.admin('/erase', {
+      method: 'POST',
+      body: JSON.stringify({ confirmHouseholdName: 'Casa de Teste' }),
+    });
+    expect(erased.status).toBe(403);
+    expect(await h.count('financial_transactions')).toBe(1);
+  });
+
+  it('exporta os dados quando liberado no deploy', async () => {
+    h.deps.config.allowExport = true;
     await h.say('/gasto 10 pão');
     const response = await h.admin('/export');
     const data = await response.json<{ financial_transactions: unknown[] }>();
     expect(data.financial_transactions).toHaveLength(1);
   });
 
-  it('exclusao exige o nome exato e apaga tudo', async () => {
+  it('exclusao liberada ainda exige o nome exato e apaga tudo', async () => {
+    h.deps.config.allowErase = true;
     await h.say('/orcamento delivery 50');
     await h.say('/gasto 60 ifood');
     const wrong = await h.admin('/erase', {
@@ -399,6 +415,65 @@ describe('exportacao e exclusao', () => {
       'incoming_events',
     ]) {
       expect(await h.count(table)).toBe(0);
+    }
+  });
+});
+
+describe('membros e logs', () => {
+  it('quem entra no grupo depois nao ganha acesso', async () => {
+    await h.webhook({
+      update_id: 990,
+      message: {
+        message_id: 990,
+        date: Math.floor(h.now() / 1000),
+        chat: { id: Number(CHAT_ID), type: 'supergroup' },
+        from: { id: Number(STRANGER_ID), is_bot: false },
+        new_chat_members: [{ id: Number(STRANGER_ID), is_bot: false }],
+      },
+    });
+    for (const text of ['/start', '/id', '/resumo', '/gasto 10 pão', 'gastei 10 no pão']) {
+      await h.say(text, { from: STRANGER_ID });
+    }
+    expect(await h.count('household_members')).toBe(2);
+    expect(await h.count('incoming_events')).toBe(0);
+    expect(h.messaging.sent).toHaveLength(0);
+  });
+
+  it('logs nao contem segredos, texto de mensagens nem valores', async () => {
+    const lines: string[] = [];
+    const original = {
+      log: console.log,
+      warn: console.warn,
+      error: console.error,
+      info: console.info,
+    };
+    for (const level of ['log', 'warn', 'error', 'info'] as const) {
+      console[level] = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+    }
+    try {
+      h.ai.nextInterpretation = new RetryableError('ai_503', undefined, 'detalhe sk-secreto');
+      await h.say('gastei 4321 no presente secreto');
+      h.messaging.failure = new RetryableError('telegram_500');
+      await h.say('/gasto 98,76 farmacia secreta');
+      await h.admin('/status', {}, 'token-errado');
+      await h.webhook({ update_id: 1 }, { secret: 'segredo-errado' });
+    } finally {
+      Object.assign(console, original);
+    }
+    const all = lines.join(' | ');
+    expect(lines.length).toBeGreaterThan(0);
+    for (const forbidden of [
+      'secreto',
+      'secreta',
+      '4321',
+      '98,76',
+      'sk-',
+      'test-webhook-secret',
+      'test-admin-token',
+      'token-errado',
+      'segredo-errado',
+    ]) {
+      expect(all).not.toContain(forbidden);
     }
   });
 });

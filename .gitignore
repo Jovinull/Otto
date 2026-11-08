@@ -3,6 +3,7 @@ dist/
 .wrangler/
 coverage/
 backups/
+evals/results/
 
 # Segredos e configuracoes locais: nunca versionar
 .env

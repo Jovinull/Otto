@@ -3,6 +3,8 @@ export class RetryableError extends Error {
   constructor(
     readonly code: string,
     readonly retryAfterMs?: number,
+    /** Texto de diagnostico do provedor. Usado so por scripts locais; nunca vai para logs. */
+    readonly detail?: string,
   ) {
     super(code);
     this.name = 'RetryableError';

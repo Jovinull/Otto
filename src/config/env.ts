@@ -6,6 +6,9 @@ export interface Secrets {
   TELEGRAM_WEBHOOK_SECRET?: string;
   ADMIN_API_TOKEN?: string;
   OPENAI_API_KEY?: string;
+  /** Variaveis de deploy (nao segredos) que liberam operacoes sensiveis por HTTP. Padrao: off. */
+  ADMIN_ALLOW_EXPORT?: string;
+  ADMIN_ALLOW_ERASE?: string;
 }
 
 export type Bindings = Env & Secrets;
@@ -25,6 +28,9 @@ export interface AppConfig {
   telegramBotToken: string | null;
   webhookSecret: string | null;
   adminApiToken: string | null;
+  /** Exportar e apagar exigem token E variavel de deploy: token vazado sozinho nao basta. */
+  allowExport: boolean;
+  allowErase: boolean;
   openAiApiKey: string | null;
   modelFast: string;
   modelAnalysis: string;
@@ -54,6 +60,8 @@ export function loadConfig(env: Bindings): AppConfig {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN || null,
     webhookSecret: env.TELEGRAM_WEBHOOK_SECRET || null,
     adminApiToken: env.ADMIN_API_TOKEN || null,
+    allowExport: env.ADMIN_ALLOW_EXPORT === 'true',
+    allowErase: env.ADMIN_ALLOW_ERASE === 'true',
     openAiApiKey: env.OPENAI_API_KEY || null,
     modelFast: env.OPENAI_MODEL_FAST,
     modelAnalysis: env.OPENAI_MODEL_ANALYSIS,
