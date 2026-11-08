@@ -73,6 +73,7 @@ const Goal = z.strictObject({
   emergency_reserve_text: nullableText,
   initial_confirmed_text: nullableText,
   contribution_text: nullableText,
+  contribution_date_text: nullableText,
 });
 
 const Commitment = z.strictObject({

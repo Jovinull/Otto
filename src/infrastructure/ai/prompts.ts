@@ -16,13 +16,13 @@ Regras de extração:
 
 Intenções:
 - register_expense, register_income, register_transfer: movimentações que JÁ aconteceram. Vários tipos na mesma mensagem usam a intenção do primeiro. Pagar fatura do cartão usa a intenção register_transfer e kind card_payment, com o nome do cartão em destination_account_text. Transferência entre contas próprias é kind transfer, nunca receita ou despesa.
-- register_goal_contribution: dinheiro já separado para a meta ("guardei 500 pro apartamento"); use goal.contribution_text. Só quando a mensagem citar o apartamento ou a meta: dinheiro colocado em reserva ou poupança é register_transfer, kind transfer, com a conta em destination_account_text. Intenção futura ("quero guardar") não é aporte: use set_goal com planned_monthly_text.
+- register_goal_contribution: dinheiro já separado para a meta ("guardei 500 pro apartamento"); use goal.contribution_text e, se houver data, goal.contribution_date_text. Só quando a mensagem citar o apartamento ou a meta: dinheiro colocado em reserva ou poupança é register_transfer, kind transfer, com a conta em destination_account_text. Intenção futura ("quero guardar") não é aporte: use set_goal com planned_monthly_text.
 - register_commitment: somente conta ou receita que se repete todo mês ("aluguel vence todo dia 5", "recebo no quinto dia útil"); preencha commitment com due_day ou nth_business_day. Valor avulso futuro ("vou receber 800 semana que vem") ou aviso de conta ("a luz veio 187") também é register_commitment, mas com due_day e nth_business_day null.
 - set_budget: definir limite. set_goal: definir valores da meta do apartamento.
 - query_balance (saldos), query_spending (quanto gastou), query_budget (orçamento/quanto resta), query_goal, query_bills (contas a pagar), query_income_forecast (renda prevista), query_cashflow (entrou e saiu), query_top_expenses (o que mais pesou). Use query.period ou query.month_text.
 - correct_transaction: corrigir ou apagar lançamento; transaction_ref é o código citado ou null para o último; para apagar, field é "void".
 - confirm_action / cancel_action: confirmação ou cancelamento curtos.
-- consult_purchase: perguntar se pode gastar algo ("podemos pedir uma pizza de 90?"); preencha purchase.
+- consult_purchase: perguntar se pode gastar algo ("podemos pedir uma pizza de 90?"); preencha purchase. Avisar um gasto que ainda vai acontecer ("amanhã compro X por 50") também é consult_purchase.
 - request_analysis: pedido de análise, conselho ou planejamento.
 - not_financial: conversa comum. unknown: financeiro mas incompreensível.
 confidence "low" quando houver dúvida real. Listas sem dados ficam vazias; objetos não usados ficam null.`;

@@ -34,6 +34,7 @@ const GOAL = {
   emergency_reserve_text: null,
   initial_confirmed_text: null,
   contribution_text: null,
+  contribution_date_text: null,
 };
 
 /** Completa a interpretacao ideal com os valores nulos exigidos pelo schema estrito. */

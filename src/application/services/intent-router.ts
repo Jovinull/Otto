@@ -136,7 +136,14 @@ export async function routeIntent(
       if (!amountAppearsInText(amount, message)) {
         return replyOnly('Não consegui confirmar o valor na mensagem. Use /aporte 500, por favor.');
       }
-      return addGoalContribution(deps, actor, amount, 'in', null, actor.eventId);
+      return addGoalContribution(
+        deps,
+        actor,
+        amount,
+        'in',
+        interpretation.goal?.contribution_date_text ?? null,
+        actor.eventId,
+      );
     }
 
     case 'register_commitment': {

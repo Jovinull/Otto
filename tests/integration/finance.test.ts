@@ -494,6 +494,29 @@ describe('meta do apartamento', () => {
     expect(h.messaging.last()).toContain('Guardado e confirmado: R$ 0,00');
   });
 
+  it('aporte em linguagem natural respeita a data informada', async () => {
+    await h.say('/meta entrada=80000');
+    await aiSays(
+      'Guardei 500 ontem pro apartamento',
+      interpretation('register_goal_contribution', {
+        goal: {
+          entry_text: null,
+          additional_costs_text: null,
+          deadline_text: null,
+          planned_monthly_text: null,
+          emergency_reserve_text: null,
+          initial_confirmed_text: null,
+          contribution_text: '500',
+          contribution_date_text: 'ontem',
+        },
+      }),
+    );
+    const [row] = await h.query<{ contribution_date: string }>(
+      'SELECT contribution_date FROM goal_contributions',
+    );
+    expect(row!.contribution_date).toBe('2026-11-09');
+  });
+
   it('intencao em linguagem natural nao cria aporte', async () => {
     await h.say('/meta entrada=80000');
     await aiSays(
@@ -507,6 +530,7 @@ describe('meta do apartamento', () => {
           emergency_reserve_text: null,
           initial_confirmed_text: null,
           contribution_text: null,
+          contribution_date_text: null,
         },
       }),
     );

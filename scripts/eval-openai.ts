@@ -1,5 +1,5 @@
 // Avaliacao real da interpretacao contra evals/interpretation.json. So roda com --yes.
-// Uso: pnpm eval:openai -- --yes [--limit 10] [--only uber-conto]
+// Uso: pnpm eval:openai -- --yes [--limit 10] [--only uber-conto] [--file evals/holdout.json]
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { ErrorCategory, Expectation } from '../evals/compare';
 import { compareInterpretation } from '../evals/compare';
@@ -17,7 +17,9 @@ const option = (name: string) => {
   return index >= 0 ? process.argv[index + 1] : undefined;
 };
 
-const dataset = JSON.parse(readFileSync('evals/interpretation.json', 'utf8')) as {
+const dataset = JSON.parse(
+  readFileSync(option('--file') ?? 'evals/interpretation.json', 'utf8'),
+) as {
   version: number;
   cases: Case[];
 };
