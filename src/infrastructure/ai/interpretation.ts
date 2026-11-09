@@ -10,6 +10,17 @@ export const INTENTS = [
   'query_spending',
   'query_budget',
   'query_goal',
+  'query_status_personal',
+  'query_status_couple',
+  'query_invoices',
+  'query_free_balance',
+  'create_account',
+  'set_default_account',
+  'set_default_card',
+  'create_goal',
+  'allocate_goal',
+  'withdraw_goal',
+  'report_balance',
   'query_bills',
   'query_income_forecast',
   'query_cashflow',
@@ -57,6 +68,7 @@ const Query = z.strictObject({
   month_text: nullableText,
   category_slug: nullableText,
   person_text: nullableText,
+  account_text: nullableText,
 });
 
 const Budget = z.strictObject({
@@ -75,6 +87,7 @@ const Goal = z.strictObject({
   contribution_text: nullableText,
   contribution_date_text: nullableText,
   goal_name: nullableText,
+  target_text: nullableText,
   account_text: nullableText,
   source_account_text: nullableText,
 });
@@ -87,6 +100,18 @@ const Commitment = z.strictObject({
   nth_business_day: z.number().int().nullable(),
   person_text: nullableText,
   category_slug: nullableText,
+  account_text: nullableText,
+  is_monthly: z.boolean(),
+});
+
+const Account = z.strictObject({
+  name_text: nullableText,
+  kind: z.enum(['checking', 'savings', 'cash', 'reserve', 'joint', 'credit_card']).nullable(),
+  owner_text: nullableText,
+  opening_text: nullableText,
+  closing_day: z.number().int().nullable(),
+  due_day: z.number().int().nullable(),
+  role: z.enum(['primary', 'secondary']).nullable(),
 });
 
 const Correction = z.strictObject({
@@ -111,6 +136,7 @@ export const Interpretation = z.strictObject({
   commitment: Commitment.nullable(),
   correction: Correction.nullable(),
   purchase: Purchase.nullable(),
+  account: Account.nullable(),
 });
 export type Interpretation = z.infer<typeof Interpretation>;
 export type TransactionItem = z.infer<typeof TransactionItem>;

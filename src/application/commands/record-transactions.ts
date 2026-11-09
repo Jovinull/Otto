@@ -6,7 +6,12 @@ import type {
   Slot,
   TransactionDraft,
 } from '../../domain/finance/transactions';
-import { resolveDraft } from '../../domain/finance/transactions';
+import {
+  defaultCreditCard,
+  isBareCardHint,
+  matchAccount,
+  resolveDraft,
+} from '../../domain/finance/transactions';
 import { cycleForInstallment } from '../../domain/finance/card-cycle';
 import { cardDays } from '../queries/cards';
 import type { Stmt } from '../../infrastructure/database/client';
@@ -25,7 +30,9 @@ import type { Actor, Deps, Effect, Reply } from '../context';
 import { ledgerContext, replyOnly } from '../context';
 import type { BudgetView, ExtraExpense } from '../queries/finance';
 import { accountBalances, loadBudgetViews, shortId } from '../queries/finance';
+import { cardStatement } from '../queries/cards';
 import { reservedShortfall } from './goals';
+import type { Account } from '../context';
 import { prepareIncomeDrafts } from './income';
 import {
   budgetNudge,
@@ -76,7 +83,7 @@ export type PendingPayload =
   | { type: 'archive_account'; accountId: string }
   | { type: 'archive_goal'; goalId: string }
   | { type: 'reconcile'; reconciliationId: string }
-  | { type: 'goal_location'; movement: GoalMovement }
+  | { type: 'goal_location'; movement: GoalMovement; linkedAccountId?: string | null }
   | { type: 'goal_move'; movement: GoalMovement }
   | { type: 'onboarding'; step: string }
   | { type: 'onboarding_confirm' };
@@ -448,6 +455,94 @@ async function budgetFollowUp(
  * Caminho unico de registro. Aplica as regras financeiras e devolve as gravacoes;
  * o chamador as confirma junto com a resposta, em uma so transacao do D1.
  */
+/** O cartao que um pagamento sem valor quer quitar, quando nao ha duvida. */
+function paymentCard(actor: Actor, draft: TransactionDraft): Account | null {
+  const context = ledgerContext(actor);
+  const cards = actor.scope.accounts.filter((a) => a.kind === 'credit_card');
+  const direct = cards.find((c) => c.id === draft.destinationAccountId);
+  if (direct) return direct;
+  const member = context.members.find((m) => m.id === actor.member.id);
+  const hint = isBareCardHint(draft.destinationAccountText) ? null : draft.destinationAccountText;
+  const match = matchAccount(hint, context.accounts, { memberId: actor.member.id, only: 'card' });
+  const id =
+    match.status === 'found'
+      ? match.account.id
+      : match.status === 'no_hint' && member
+        ? (() => {
+            const fallback = defaultCreditCard(member, context.accounts);
+            return fallback.status === 'found' ? fallback.account.id : null;
+          })()
+        : null;
+  return cards.find((c) => c.id === id) ?? null;
+}
+
+/** "A fatura foi paga": mostra o valor em aberto e so registra depois da resposta. */
+async function askInvoiceAmount(
+  deps: Deps,
+  actor: Actor,
+  drafts: TransactionDraft[],
+  options: RecordOptions,
+): Promise<Effect | null> {
+  const index = drafts.findIndex(
+    (d) => d.kind === 'card_payment' && d.amountText === null && d.amountCents === undefined,
+  );
+  if (index < 0 || options.origin === 'confirmation') return null;
+  const card = paymentCard(actor, drafts[index]!);
+  if (!card) return null;
+  const statement = await cardStatement(deps.db, actor.scope, card, actor.today);
+  if (!statement) return null;
+  const open = statement.invoices.filter((i) => i.status !== 'future' && i.remainingCents > 0);
+  const total = open.reduce((sum, i) => sum + i.remainingCents, 0);
+  if (total === 0) {
+    return replyOnly(`${card.name} não tem fatura em aberto. Veja /faturas ${card.name}.`);
+  }
+  const pendingId = deps.newId();
+  return {
+    statements: [
+      ...(options.extraStatements ?? []),
+      createPendingStatement(deps, actor, pendingId, {
+        type: 'fill_slot',
+        drafts: freezeDrafts(drafts, actor.today),
+        index,
+        slot: 'amount',
+        origin: options.origin,
+        candidateCents: total,
+      }),
+    ],
+    replies: [
+      {
+        text: `${card.name}: ${formatBRL(total)} em aberto, vencimento em ${formatShortDate(open[0]!.dueDate)}. Foi o total? Responda "sim" ou o valor pago.`,
+      },
+    ],
+  };
+}
+
+/** Situacao da fatura depois do pagamento, para o usuario saber se quitou. */
+async function paymentNotes(
+  deps: Deps,
+  actor: Actor,
+  items: readonly { transaction: ResolvedTransaction }[],
+): Promise<string[]> {
+  const notes: string[] = [];
+  for (const { transaction } of items) {
+    if (transaction.transferKind !== 'card_payment') continue;
+    const card = actor.scope.accounts.find((a) => a.id === transaction.destinationAccountId);
+    if (!card) continue;
+    const statement = await cardStatement(deps.db, actor.scope, card, actor.today);
+    if (!statement) continue;
+    const open = statement.invoices
+      .filter((i) => i.status !== 'future')
+      .reduce((sum, i) => sum + i.remainingCents, 0);
+    const left = open - transaction.amountCents;
+    if (open === 0)
+      notes.push(`${card.name} não tinha fatura em aberto: o valor fica como crédito.`);
+    else if (left > 0)
+      notes.push(`Pagamento parcial: ainda faltam ${formatBRL(left)} em ${card.name}.`);
+    else notes.push(`Fatura de ${card.name} quitada ✅`);
+  }
+  return notes;
+}
+
 export async function recordDrafts(
   deps: Deps,
   actor: Actor,
@@ -464,6 +559,8 @@ export async function recordDrafts(
       : null;
   if (income?.stop) return income.stop;
   const drafts = income?.drafts ?? received;
+  const invoiceQuestion = await askInvoiceAmount(deps, actor, drafts, options);
+  if (invoiceQuestion) return invoiceQuestion;
 
   for (let index = 0; index < drafts.length; index++) {
     const outcome = resolveDraft(drafts[index]!, context);
@@ -584,6 +681,7 @@ export async function recordDrafts(
       `Se esse dinheiro é para o apartamento, confirme com /aporte ${formatBRL(toReserve.transaction.amountCents).replace('R$ ', '')}: transferência sozinha não conta na meta.`,
     );
   }
+  settlement.notes.push(...(await paymentNotes(deps, actor, items)));
   const budget = await budgetFollowUp(deps, actor, items, actor.eventId);
   statements.push(...settlement.statements, ...budget.statements);
 

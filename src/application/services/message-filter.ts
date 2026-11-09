@@ -79,6 +79,23 @@ const FINANCIAL_TERMS = [
   'receber',
   'recebo',
   'gastar',
+  'conta',
+  'banco',
+  'cofre',
+  'cofres',
+  'metas',
+  'objetivo',
+  'tirei',
+  'retirei',
+  'coloquei',
+  'caiu',
+  'status',
+  'situacao',
+  'nubank',
+  'picpay',
+  'santander',
+  'bradesco',
+  'itau',
 ];
 
 export function mentionsAssistant(text: string): boolean {

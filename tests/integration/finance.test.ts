@@ -233,7 +233,13 @@ describe('consultas', () => {
     await aiSays(
       'Quanto gastamos este mês?',
       interpretation('query_spending', {
-        query: { period: 'this_month', month_text: null, category_slug: null, person_text: null },
+        query: {
+          account_text: null,
+          period: 'this_month',
+          month_text: null,
+          category_slug: null,
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('R$ 230,00');
@@ -242,6 +248,7 @@ describe('consultas', () => {
       'Quanto Jennifer gastou com supermercado?',
       interpretation('query_spending', {
         query: {
+          account_text: null,
           period: 'this_month',
           month_text: null,
           category_slug: 'supermercado',
@@ -255,6 +262,7 @@ describe('consultas', () => {
       'Quanto eu gastei com delivery?',
       interpretation('query_spending', {
         query: {
+          account_text: null,
           period: 'this_month',
           month_text: null,
           category_slug: 'delivery',
@@ -267,7 +275,13 @@ describe('consultas', () => {
     await aiSays(
       'E quanto gastamos em outubro?',
       interpretation('query_spending', {
-        query: { period: null, month_text: 'outubro', category_slug: null, person_text: null },
+        query: {
+          account_text: null,
+          period: null,
+          month_text: 'outubro',
+          category_slug: null,
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('R$ 999,00');
@@ -277,7 +291,13 @@ describe('consultas', () => {
     await aiSays(
       'Quanto gastamos este mês?',
       interpretation('query_spending', {
-        query: { period: 'this_month', month_text: null, category_slug: null, person_text: null },
+        query: {
+          account_text: null,
+          period: 'this_month',
+          month_text: null,
+          category_slug: null,
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('Não encontrei gastos');
@@ -292,7 +312,13 @@ describe('consultas', () => {
     await aiSays(
       'Quanto entrou e saiu nos últimos sete dias?',
       interpretation('query_cashflow', {
-        query: { period: 'last_7_days', month_text: null, category_slug: null, person_text: null },
+        query: {
+          account_text: null,
+          period: 'last_7_days',
+          month_text: null,
+          category_slug: null,
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('Entrou: R$ 500,00');
@@ -395,7 +421,13 @@ describe('orcamento', () => {
     await aiSays(
       'Quanto ainda podemos gastar com delivery?',
       interpretation('query_budget', {
-        query: { period: null, month_text: null, category_slug: 'delivery', person_text: null },
+        query: {
+          account_text: null,
+          period: null,
+          month_text: null,
+          category_slug: 'delivery',
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('R$ 100,00 de R$ 250,00 (40%), restam R$ 150,00');
@@ -501,6 +533,7 @@ describe('meta do apartamento', () => {
       'Guardei 500 ontem pro apartamento',
       interpretation('register_goal_contribution', {
         goal: {
+          target_text: null,
           entry_text: null,
           additional_costs_text: null,
           deadline_text: null,
@@ -530,6 +563,7 @@ describe('meta do apartamento', () => {
       'Quero guardar 1500 por mês',
       interpretation('set_goal', {
         goal: {
+          target_text: null,
           entry_text: null,
           additional_costs_text: null,
           deadline_text: null,
@@ -592,6 +626,8 @@ describe('recorrencias e previsao', () => {
       'Nosso aluguel é 1200 reais e vence todo dia 5.',
       interpretation('register_commitment', {
         commitment: {
+          account_text: null,
+          is_monthly: false,
           kind: 'expense',
           description: 'aluguel',
           amount_text: '1200',

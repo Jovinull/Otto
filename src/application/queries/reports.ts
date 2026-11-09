@@ -45,6 +45,8 @@ function categoryLines(rows: readonly CategoryTotal[], limit = 8): string[] {
 }
 
 export interface SpendingQuery {
+  accountId?: string | undefined;
+  accountName?: string | undefined;
   range: DateRange;
   label: string;
   categoryId?: string | undefined;
@@ -60,15 +62,16 @@ export async function spendingAnswer(
   const total = await sumExpenses(deps.db, scope.household.id, query.range, {
     categoryId: query.categoryId,
     memberId: query.memberId,
+    accountId: query.accountId,
   });
   const who = query.memberId ? memberName(scope, query.memberId) : 'Vocês';
-  const what = query.categoryName ? ` com ${query.categoryName}` : '';
+  const what = `${query.categoryName ? ` com ${query.categoryName}` : ''}${query.accountName ? ` em ${query.accountName}` : ''}`;
   if (total.count === 0) {
     return `Não encontrei gastos${what} ${query.label}${query.memberId ? ` de ${who}` : ''}.`;
   }
   const verb = query.memberId ? 'gastou' : 'gastaram';
   const header = `${who} ${verb} ${formatBRL(total.totalCents)}${what} ${query.label} (${total.count} ${total.count === 1 ? 'lançamento' : 'lançamentos'}).`;
-  if (query.categoryId) return header;
+  if (query.categoryId || query.accountId) return header;
   const byCategory = await expensesByCategory(
     deps.db,
     scope.household.id,

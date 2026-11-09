@@ -1,0 +1,1 @@
+ALTER TABLE `financial_goals` ADD `linked_account_id` text REFERENCES financial_accounts(id);

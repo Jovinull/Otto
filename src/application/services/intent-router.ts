@@ -1,5 +1,5 @@
 import type { TransactionDraft } from '../../domain/finance/transactions';
-import { amountAppearsInText } from '../../domain/finance/transactions';
+import { amountAppearsInText, matchAccount } from '../../domain/finance/transactions';
 import { canWrite } from '../../domain/household/authorization';
 import type { Interpretation, TransactionItem } from '../../infrastructure/ai/interpretation';
 import {
@@ -15,12 +15,17 @@ import { parseBRL } from '../../shared/money';
 import { normalizeText } from '../../shared/text';
 import { correctTransaction, requestVoid } from '../commands/corrections';
 import {
+  addAccount,
   addCommitment,
   findCategoryByText,
   setBudget,
   updateApartmentGoal,
 } from '../commands/planning';
-import { moveGoalFunds } from '../commands/goals';
+import { createGoal, linkGoalAccount, moveGoalFunds } from '../commands/goals';
+import { reportBalance } from '../commands/reconcile';
+import { invoicesReport } from '../queries/cards';
+import { accountFreeReport, coupleStatus, personalStatus, resolveMember } from '../queries/status';
+import { defaultAccountCommand } from './command-router';
 import { recordDrafts } from '../commands/record-transactions';
 import type { Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
@@ -30,6 +35,7 @@ import {
   budgetsReport,
   cashFlowAnswer,
   goalReport,
+  singleGoalReport,
   incomeForecastReport,
   spendingAnswer,
   topExpensesReport,
@@ -157,7 +163,11 @@ export async function routeIntent(
       if (!write) return replyOnly(READ_ONLY);
       const commitment = interpretation.commitment;
       if (!commitment) return replyOnly('Não entendi o compromisso. Veja /ajuda recorrentes.');
-      if (commitment.due_day === null && commitment.nth_business_day === null) {
+      if (
+        commitment.due_day === null &&
+        commitment.nth_business_day === null &&
+        !commitment.is_monthly
+      ) {
         // Sem dia, pode ser valor avulso ("a luz veio 187"): nao vira previsao mensal sozinho.
         const value = commitment.amount_text ?? 'VALOR';
         const kind = commitment.kind === 'income' ? 'receita' : 'despesa';
@@ -182,7 +192,24 @@ export async function routeIntent(
                 scheduleValue: commitment.nth_business_day,
               } as const)
             : ({ scheduleType: 'monthly_unspecified', scheduleValue: null } as const);
+      let accountId: string | null = null;
+      if (commitment.account_text) {
+        const accounts = scope.accounts.filter((a) => a.kind !== 'credit_card');
+        const owner =
+          findMemberId(actor, commitment.person_text) === 'unknown'
+            ? actor.member.id
+            : ((findMemberId(actor, commitment.person_text) as string | undefined) ??
+              actor.member.id);
+        const match = matchAccount(commitment.account_text, accounts, { memberId: owner });
+        if (match.status !== 'found') {
+          return replyOnly(
+            `Não achei a conta "${commitment.account_text}". Cadastre com /addconta ou repita com o nome certo.`,
+          );
+        }
+        accountId = match.account.id;
+      }
       return addCommitment(deps, actor, {
+        accountId,
         kind: commitment.kind,
         description: commitment.description,
         amountText: commitment.amount_text,
@@ -201,6 +228,18 @@ export async function routeIntent(
       if (memberId === 'unknown') return replyOnly('Não encontrei essa pessoa no cadastro.');
       const categorySlug = interpretation.query?.category_slug;
       const category = categorySlug ? findCategoryByText(actor, categorySlug, 'expense') : null;
+      const accountText = interpretation.query?.account_text;
+      let spendingAccount: { id: string; name: string } | undefined;
+      if (accountText) {
+        const match = matchAccount(accountText, scope.accounts, {
+          memberId: memberId ?? actor.member.id,
+        });
+        if (match.status === 'ambiguous') {
+          return replyOnly(`Qual delas? ${match.options.map((a) => a.name).join(', ')}.`);
+        }
+        if (match.status !== 'found') return replyOnly(`Não achei "${accountText}". Veja /contas.`);
+        spendingAccount = match.account;
+      }
       return replyOnly(
         await spendingAnswer(deps, scope, {
           range,
@@ -208,6 +247,8 @@ export async function routeIntent(
           categoryId: category?.id,
           categoryName: category?.name,
           memberId,
+          accountId: spendingAccount?.id,
+          accountName: spendingAccount?.name,
         }),
       );
     }
@@ -219,7 +260,145 @@ export async function routeIntent(
     }
 
     case 'query_goal':
-      return replyOnly(await goalReport(deps, scope, today));
+      return replyOnly(
+        interpretation.goal?.goal_name
+          ? await singleGoalReport(deps, scope, today, interpretation.goal.goal_name)
+          : await goalReport(deps, scope, today),
+      );
+
+    case 'query_status_personal': {
+      const member = resolveMember(actor, interpretation.query?.person_text ?? null);
+      return replyOnly(
+        typeof member === 'string' ? member : await personalStatus(deps, actor, member),
+      );
+    }
+
+    case 'query_status_couple':
+      return replyOnly(await coupleStatus(deps, actor));
+
+    case 'query_invoices':
+      return replyOnly(
+        await invoicesReport(deps.db, scope, today, interpretation.query?.account_text ?? null),
+      );
+
+    case 'query_free_balance': {
+      const accountText = interpretation.query?.account_text;
+      return replyOnly(
+        accountText
+          ? await accountFreeReport(deps, actor, accountText)
+          : await personalStatus(deps, actor, actor.member),
+      );
+    }
+
+    case 'create_account': {
+      if (!write) return replyOnly(READ_ONLY);
+      const account = interpretation.account;
+      if (!account?.name_text) {
+        return replyOnly('Qual o nome da conta? Exemplo: /addconta corrente Nubank saldo=1000');
+      }
+      if (account.opening_text !== null && !amountAppearsInText(account.opening_text, message)) {
+        return replyOnly(
+          'Não consegui confirmar o valor. Use /addconta corrente Nome saldo=VALOR.',
+        );
+      }
+      const kind =
+        account.kind ??
+        (/cofre|caixinha/.test(normalizeText(account.name_text)) ? 'reserve' : 'checking');
+      return addAccount(deps, actor, {
+        kind,
+        name: account.name_text,
+        openingText: account.opening_text,
+        isDefault: account.role === 'primary',
+        closingDay: account.closing_day,
+        dueDay: account.due_day,
+        ownerText: account.owner_text,
+      });
+    }
+
+    case 'set_default_account':
+    case 'set_default_card': {
+      if (!write) return replyOnly(READ_ONLY);
+      const name = interpretation.account?.name_text;
+      if (!name) return replyOnly('Qual conta? Exemplo: /contapadrao Nubank');
+      return defaultAccountCommand(
+        deps,
+        actor,
+        interpretation.intent === 'set_default_card' ? 'card' : 'account',
+        [name],
+        interpretation.account?.owner_text ?? null,
+      );
+    }
+
+    case 'create_goal': {
+      if (!write) return replyOnly(READ_ONLY);
+      const goal = interpretation.goal;
+      if (!goal?.goal_name) return replyOnly('Qual o nome da meta? /meta criar NOME valor=VALOR');
+      const amounts = [goal.target_text, goal.planned_monthly_text].filter(
+        (value): value is string => value !== null,
+      );
+      if (amounts.some((value) => !amountAppearsInText(value, message))) {
+        return replyOnly('Não consegui confirmar os valores. Use /meta criar NOME valor=VALOR.');
+      }
+      if (normalizeText(goal.goal_name).includes('apartamento')) {
+        return updateApartmentGoal(deps, actor, {
+          entry: goal.target_text,
+          additionalCosts: null,
+          deadline: goal.deadline_text,
+          plannedMonthly: goal.planned_monthly_text,
+          emergencyReserve: null,
+          initialConfirmed: null,
+        });
+      }
+      return createGoal(deps, actor, {
+        name: goal.goal_name,
+        targetText: goal.target_text,
+        deadlineText: goal.deadline_text,
+        plannedText: goal.planned_monthly_text,
+      });
+    }
+
+    case 'allocate_goal':
+    case 'withdraw_goal': {
+      if (!write) return replyOnly(READ_ONLY);
+      const goal = interpretation.goal;
+      const withdrawing = interpretation.intent === 'withdraw_goal';
+      if (!goal?.contribution_text) {
+        if (!withdrawing && goal?.account_text) {
+          return linkGoalAccount(deps, actor, goal.goal_name, goal.account_text);
+        }
+        return replyOnly('Qual o valor? Exemplo: /retirada Viagem 200 @Conta');
+      }
+      if (!amountAppearsInText(goal.contribution_text, message)) {
+        return replyOnly('Não consegui confirmar o valor. Use /alocar ou /retirada.');
+      }
+      return moveGoalFunds(
+        deps,
+        actor,
+        {
+          goalText: goal.goal_name,
+          amountText: goal.contribution_text,
+          direction: withdrawing ? 'out' : 'in',
+          accountText: goal.account_text,
+          sourceAccountText: null,
+          dateText: goal.contribution_date_text,
+          kind: withdrawing ? 'contribution' : 'allocation',
+          requireLocation: !withdrawing,
+        },
+        actor.eventId,
+      );
+    }
+
+    case 'report_balance': {
+      if (!write) return replyOnly(READ_ONLY);
+      const account = interpretation.account;
+      if (!account?.name_text || account.opening_text === null) {
+        return replyOnly('Qual conta e valor? Exemplo: /saldo Nubank 830,00');
+      }
+      if (!amountAppearsInText(account.opening_text, message)) {
+        return replyOnly('Não consegui confirmar o valor. Use /saldo CONTA VALOR.');
+      }
+      return reportBalance(deps, actor, account.name_text, account.opening_text);
+    }
 
     case 'query_bills':
       return replyOnly(await billsReport(deps, scope, targetPeriod(interpretation.query, today)));

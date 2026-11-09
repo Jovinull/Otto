@@ -5,6 +5,7 @@ import type { AccountKind } from '../../domain/finance/transactions';
 import { accountIdentityKey } from '../../domain/finance/transactions';
 import type { Stmt } from '../../infrastructure/database/client';
 import {
+  financialTransactions,
   budgets,
   categories,
   financialAccounts,
@@ -480,6 +481,8 @@ export async function addCommitment(
 }
 
 export interface NewAccount {
+  /** Definido por quem precisa referenciar a conta na mesma transacao. */
+  id?: string;
   kind: AccountKind;
   name: string;
   openingText: string | null;
@@ -572,7 +575,7 @@ export async function addAccount(deps: Deps, actor: Actor, input: NewAccount): P
   if (isCard && debt !== null) opening = -debt;
 
   const householdId = actor.scope.household.id;
-  const id = deps.newId();
+  const id = input.id ?? deps.newId();
   const statements: Stmt[] = [
     deps.db.insert(financialAccounts).values({
       id,
@@ -718,6 +721,17 @@ export async function markNextInstallmentPaid(
 ): Promise<Effect> {
   const plan = await findPlan(deps, actor, reference);
   if (!plan) return replyOnly('Parcelamento não encontrado. Veja /parcelas.');
+  const purchase = await deps.db
+    .select({ cardId: financialTransactions.sourceAccountId })
+    .from(financialTransactions)
+    .where(eq(financialTransactions.id, plan.transactionId))
+    .limit(1);
+  const card = actor.scope.accounts.find((a) => a.id === purchase[0]?.cardId);
+  if (card && card.creditClosingDay !== null && card.creditDueDay !== null) {
+    return replyOnly(
+      `As parcelas de ${card.name} são quitadas pelo pagamento das faturas, para não contar o mesmo dinheiro duas vezes. Use /pagar_fatura VALOR Conta para ${card.name}.`,
+    );
+  }
   const rows = await deps.db
     .select()
     .from(installments)

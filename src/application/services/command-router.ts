@@ -49,7 +49,13 @@ import {
   resolveMember,
 } from '../queries/status';
 import type { GoalMovement } from '../commands/goals';
-import { createGoal, editGoal, moveGoalFunds, requestGoalRemoval } from '../commands/goals';
+import {
+  createGoal,
+  editGoal,
+  linkGoalAccount,
+  moveGoalFunds,
+  requestGoalRemoval,
+} from '../commands/goals';
 import { reportBalance } from '../commands/reconcile';
 import { recordDrafts } from '../commands/record-transactions';
 import { auditStatement } from '../commands/shared';
@@ -71,7 +77,8 @@ import {
 } from '../queries/reports';
 import { analysisAnswer } from './advisor';
 import { onboardingCommand } from './onboarding';
-import { invoicesReport } from '../queries/cards';
+import { cardDays, cardStatement, invoicesReport } from '../queries/cards';
+import { cycleForInstallment } from '../../domain/finance/card-cycle';
 import { aiSpend } from './ai-governor';
 import { commandsText, helpText, onboardingChecklist } from './help';
 
@@ -200,6 +207,7 @@ const WRITE_COMMANDS = new Set([
   'meta',
   'aporte',
   'alocar',
+  'vincular',
   'saldo',
   'retirada',
   'desfazer_aporte',
@@ -416,6 +424,12 @@ export async function handleCommand(
       const movement = parseGoalMovement(command, args);
       if (typeof movement === 'string') return replyOnly(movement);
       return moveGoalFunds(deps, actor, movement, actor.eventId);
+    }
+    case 'vincular': {
+      const account = args.find((t) => t.startsWith('@') && t.length > 1);
+      const goalName = rest.filter((t) => !t.startsWith('@')).join(' ');
+      if (!account || !goalName) return replyOnly('Formato: /vincular META @Conta');
+      return linkGoalAccount(deps, actor, goalName, account.slice(1));
     }
     case 'saldo': {
       const amount = rest.at(-1);
@@ -671,7 +685,7 @@ function saveSettings(
 }
 
 /** Mostra ou define a conta (ou o cartao) padrao de uma pessoa. */
-function defaultAccountCommand(
+export function defaultAccountCommand(
   deps: Deps,
   actor: Actor,
   type: 'account' | 'card',
@@ -825,13 +839,17 @@ async function aiUsageReport(deps: Deps): Promise<string> {
 async function installmentsReport(deps: Deps, actor: Actor): Promise<string> {
   const rows = await deps.db
     .select({
+      planId: installmentPlans.id,
       transactionId: installmentPlans.transactionId,
       description: financialTransactions.description,
+      cardId: financialTransactions.sourceAccountId,
+      date: financialTransactions.financialDate,
       total: installmentPlans.totalCents,
       count: installmentPlans.installmentCount,
       firstDue: installmentPlans.firstDueDate,
-      remaining: sql<number>`sum(case when ${installments.status} = 'scheduled' then ${installments.amountCents} else 0 end)`,
-      paid: sql<number>`sum(case when ${installments.status} = 'paid' then 1 else 0 end)`,
+      sequence: installments.sequence,
+      amount: installments.amountCents,
+      status: installments.status,
     })
     .from(installmentPlans)
     .innerJoin(financialTransactions, eq(installmentPlans.transactionId, financialTransactions.id))
@@ -841,14 +859,38 @@ async function installmentsReport(deps: Deps, actor: Actor): Promise<string> {
         eq(installmentPlans.householdId, actor.scope.household.id),
         eq(installmentPlans.status, 'active'),
       ),
-    )
-    .groupBy(installmentPlans.id);
+    );
   if (rows.length === 0) return 'Nenhum parcelamento ativo.';
-  return [
-    'Parcelamentos ativos:',
-    ...rows.map(
-      (r) =>
-        `• ${r.description}: ${formatBRL(r.total)} em ${r.count}x, ${r.paid} quitadas, restam ${formatBRL(r.remaining)} · ${r.firstDue ? `1º venc. ${r.firstDue}` : 'sem data de vencimento'} · #${shortId(r.transactionId)}`,
-    ),
-  ].join('\n');
+
+  // Em cartao com dias cadastrados, quem define o que foi quitado e o pagamento das faturas.
+  const paidCycles = new Map<string, Set<string>>();
+  for (const cardId of new Set(rows.map((r) => r.cardId))) {
+    const card = actor.scope.accounts.find((a) => a.id === cardId);
+    if (!card || !cardDays(card)) continue;
+    const statement = await cardStatement(deps.db, actor.scope, card, actor.today);
+    if (statement) {
+      paidCycles.set(
+        card.id,
+        new Set(
+          statement.invoices.filter((i) => i.remainingCents === 0).map((i) => i.closingPeriod),
+        ),
+      );
+    }
+  }
+
+  const lines = [...new Set(rows.map((r) => r.planId))].map((planId) => {
+    const parts = rows.filter((r) => r.planId === planId);
+    const plan = parts[0]!;
+    const card = actor.scope.accounts.find((a) => a.id === plan.cardId);
+    const days = card ? cardDays(card) : null;
+    const cycles = plan.cardId ? paidCycles.get(plan.cardId) : undefined;
+    const isPaid = (part: (typeof parts)[number]) =>
+      days && cycles
+        ? cycles.has(cycleForInstallment(part.date, part.sequence, days).closingPeriod)
+        : part.status === 'paid';
+    const paid = parts.filter(isPaid);
+    const remaining = parts.filter((p) => !isPaid(p)).reduce((sum, p) => sum + p.amount, 0);
+    return `• ${plan.description}: ${formatBRL(plan.total)} em ${plan.count}x, ${paid.length} quitadas, restam ${formatBRL(remaining)} · ${plan.firstDue ? `1º venc. ${plan.firstDue}` : 'sem data de vencimento'} · #${shortId(plan.transactionId)}`;
+  });
+  return ['Parcelamentos ativos:', ...lines].join('\n');
 }

@@ -38,6 +38,7 @@ function expenseFilter(householdId: string, range: DateRange) {
 }
 
 export interface ExpenseFilter {
+  accountId?: string | undefined;
   categoryId?: string | undefined;
   memberId?: string | undefined;
   /** Exclui gastos marcados como do casal (orcamento individual). */
@@ -64,6 +65,7 @@ export async function sumExpenses(
         filter.categoryId ? eq(tx.categoryId, filter.categoryId) : undefined,
         filter.memberId ? eq(tx.memberId, filter.memberId) : undefined,
         filter.onlyIndividual ? eq(tx.isShared, false) : undefined,
+        filter.accountId ? eq(tx.sourceAccountId, filter.accountId) : undefined,
       ),
     );
   return row ?? { totalCents: 0, count: 0 };
@@ -418,6 +420,7 @@ export interface GoalView {
   kind: 'apartment' | 'general';
   ownerMemberId: string | null;
   emergencyReserveCents: number | null;
+  linkedAccountId: string | null;
   deadline: string | null;
   notes: string | null;
   progress: GoalProgress;
@@ -477,6 +480,7 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
       name: goal.name,
       kind: goal.kind,
       ownerMemberId: goal.ownerMemberId,
+      linkedAccountId: goal.linkedAccountId,
       emergencyReserveCents: goal.emergencyReserveCents,
       deadline: goal.deadline,
       notes: goal.notes,

@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { ResolvedTransaction } from '../../domain/finance/transactions';
 import { matchAccount } from '../../domain/finance/transactions';
 import { computeAvailability } from '../../domain/goals/goal';
+import { parseMemberPreferences } from '../../domain/household/settings';
 import type { Stmt } from '../../infrastructure/database/client';
 import { financialGoals, goalContributions } from '../../infrastructure/database/schema';
 import type { LocalDate } from '../../shared/dates';
@@ -12,7 +13,7 @@ import type { Account, Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
 import type { AccountBalance, GoalView } from '../queries/finance';
 import { accountBalances, loadGoals, shortId } from '../queries/finance';
-import { findMember, parseDeadline } from './planning';
+import { addAccount, findMember, parseDeadline } from './planning';
 import {
   confirmationButtons,
   createPendingStatement,
@@ -325,6 +326,11 @@ export interface GoalMovement {
 function findCashAccount(actor: Actor, text: string): { account: Account } | { error: string } {
   const accounts = actor.scope.accounts.filter((a) => a.kind !== 'credit_card');
   const match = matchAccount(text.replaceAll('_', ' '), accounts, { memberId: actor.member.id });
+  if (match.status !== 'found' && normalizeText(text).includes('principal')) {
+    const defaultId = parseMemberPreferences(actor.member.preferences).defaultAccountId;
+    const account = accounts.find((a) => a.id === defaultId);
+    if (account) return { account };
+  }
   if (match.status === 'found') {
     return { account: accounts.find((a) => a.id === match.account.id)! };
   }
@@ -386,16 +392,26 @@ export async function moveGoalFunds(
     loadGoals(deps.db, actor.scope.household.id, actor.today),
     accountBalances(deps.db, actor.scope),
   ]);
-  const found = findGoal(goals, input.goalText);
-  if ('error' in found) return replyOnly(found.error);
-  const goal = found.goal;
-
   let account: Account | null = null;
   if (input.accountText) {
     const lookup = findCashAccount(actor, input.accountText);
     if ('error' in lookup) return replyOnly(lookup.error);
     account = lookup.account;
   }
+
+  // Em linguagem natural, sem meta citada, so a do cofre informado ou a unica existente.
+  let found: GoalLookup;
+  if (input.requireLocation && !input.goalText && goals.length > 1) {
+    const linked = goals.filter((g) => account && g.linkedAccountId === account.id);
+    found =
+      linked.length === 1
+        ? { goal: linked[0]! }
+        : { error: `Para qual meta? Opções: ${goals.map((g) => g.name).join(', ')}.` };
+  } else {
+    found = findGoal(goals, input.goalText);
+  }
+  if ('error' in found) return replyOnly(found.error);
+  const goal = found.goal;
 
   const statements: Stmt[] = [...extra];
   const notes: string[] = [];
@@ -436,17 +452,21 @@ export async function moveGoalFunds(
 
     if (!account && input.requireLocation) {
       const pendingId = deps.newId();
+      const linkedName = actor.scope.accounts.find((a) => a.id === goal.linkedAccountId)?.name;
       return {
         statements: [
           ...extra,
           createPendingStatement(deps, actor, pendingId, {
             type: 'goal_location',
-            movement: { ...input, requireLocation: false },
+            movement: { ...input, goalText: goal.name, requireLocation: false },
+            linkedAccountId: goal.linkedAccountId,
           }),
         ],
         replies: [
           {
-            text: `Antes de reservar ${formatBRL(amount)} para ${goal.name}: esse dinheiro já está em alguma conta, ou houve transferência?\nResponda o nome da conta onde ele está, ou "de Origem para Destino" se transferiu, ou "não sei".`,
+            text: linkedName
+              ? `Antes de reservar ${formatBRL(amount)} para ${goal.name}: a meta fica em ${linkedName}. O dinheiro já estava lá?\nResponda "sim", ou o nome da conta de onde ele veio, ou "não sei".`
+              : `Antes de reservar ${formatBRL(amount)} para ${goal.name}: esse dinheiro já está em alguma conta, ou houve transferência?\nResponda o nome da conta onde ele está, ou "de Origem para Destino" se transferiu, ou "não sei".`,
           },
         ],
       };
@@ -519,7 +539,7 @@ export async function moveGoalFunds(
           notes.push(`Saldo de ${account.name} desconhecido: não consegui validar essa reserva.`);
         } else if (freeCents + incoming < amount) {
           return replyOnly(
-            `Em ${account.name} há ${formatBRL(Math.max(freeCents + incoming, 0))} livres; não dá para reservar ${formatBRL(amount)}. O mesmo dinheiro não pode valer duas vezes. Veja /contas.`,
+            `Em ${account.name} há ${formatBRL(Math.max(freeCents + incoming, 0))} livres; não dá para reservar ${formatBRL(amount)}. O mesmo dinheiro não pode valer duas vezes. Se ele veio de outra conta: /aporte ${goal.name} ${formatBRL(amount).replace('R$ ', '')} @${account.name} de:Origem`,
           );
         }
       }
@@ -576,4 +596,100 @@ export function reservedShortfall(position: AccountBalance, amount: number): num
   return freeCents < amount
     ? Math.min(amount - Math.max(freeCents, 0), position.allocatedCents)
     : null;
+}
+
+/** Liga a meta a uma conta ou cofre. O que estava sem local passa para la, sem mover dinheiro. */
+export async function linkGoalAccount(
+  deps: Deps,
+  actor: Actor,
+  goalText: string | null,
+  accountText: string,
+): Promise<Effect> {
+  const goals = await loadGoals(deps.db, actor.scope.household.id, actor.today);
+  const found = findGoal(goals, goalText);
+  if ('error' in found) return replyOnly(found.error);
+  const goal = found.goal;
+  const statements: Stmt[] = [];
+  const notes: string[] = [];
+
+  let accountId: string;
+  let accountName: string;
+  let knownFree: number | null = null;
+  const lookup = findCashAccount(actor, accountText);
+  if ('account' in lookup) {
+    accountId = lookup.account.id;
+    accountName = lookup.account.name;
+    const position = (await accountBalances(deps.db, actor.scope)).find((p) => p.id === accountId);
+    knownFree = position ? computeAvailability(position).freeCents : null;
+  } else {
+    accountId = deps.newId();
+    accountName = accountText.replaceAll('_', ' ').trim();
+    const owner = actor.scope.members.find((m) => m.id === goal.ownerMemberId);
+    const created = await addAccount(deps, actor, {
+      id: accountId,
+      kind: 'reserve',
+      name: accountName,
+      openingText: null,
+      isDefault: false,
+      closingDay: null,
+      dueDay: null,
+      ownerText: owner?.name ?? 'casal',
+    });
+    if (created.statements.length === 0) return created;
+    statements.push(...created.statements);
+    notes.push(`Cadastrei ${accountName} como reserva, com saldo desconhecido.`);
+  }
+
+  const unlocated = goal.locations.find((l) => l.accountId === null)?.cents ?? 0;
+  if (unlocated > 0) {
+    if (knownFree !== null && knownFree < unlocated) {
+      notes.push(
+        `${formatBRL(unlocated)} seguem sem local: ${accountName} só tem ${formatBRL(Math.max(knownFree, 0))} livres.`,
+      );
+    } else {
+      const base = {
+        householdId: actor.scope.household.id,
+        goalId: goal.id,
+        amountCents: unlocated,
+        kind: 'allocation' as const,
+        contributionDate: actor.today,
+        memberId: actor.member.id,
+        createdAt: deps.now(),
+      };
+      statements.push(
+        deps.db.insert(goalContributions).values({
+          ...base,
+          id: deps.newId(),
+          direction: 'out',
+          accountId: null,
+          idempotencyKey: `${actor.eventId}:link-out`,
+        }),
+        deps.db.insert(goalContributions).values({
+          ...base,
+          id: deps.newId(),
+          direction: 'in',
+          accountId,
+          idempotencyKey: `${actor.eventId}:link-in`,
+        }),
+      );
+      notes.push(`${formatBRL(unlocated)} que estavam sem local agora constam em ${accountName}.`);
+    }
+  }
+
+  statements.push(
+    deps.db
+      .update(financialGoals)
+      .set({ linkedAccountId: accountId, updatedAt: deps.now() })
+      .where(
+        and(
+          eq(financialGoals.id, goal.id),
+          eq(financialGoals.householdId, actor.scope.household.id),
+        ),
+      ),
+    auditStatement(deps, actor, 'goal.linked', 'goal', goal.id, { after: { accountId } }),
+  );
+  return {
+    statements,
+    replies: [{ text: [`Meta ${goal.name} agora fica em ${accountName}.`, ...notes].join('\n') }],
+  };
 }

@@ -233,6 +233,8 @@ export const financialGoals = sqliteTable(
     normalizedName: text('normalized_name').notNull().default(''),
     // Nulo: meta do casal. Preenchido: meta individual.
     ownerMemberId: text('owner_member_id').references(() => householdMembers.id),
+    // Onde o dinheiro da meta costuma ficar.
+    linkedAccountId: text('linked_account_id').references(() => financialAccounts.id),
     // Metas gerais usam target_cents; o apartamento soma entrada e custos.
     targetCents: integer('target_cents'),
     // Todos opcionais: a meta nasce sem valores inventados.

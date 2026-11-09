@@ -121,6 +121,12 @@ function answerGoalLocation(
   if (value === 'nao sei')
     return moveGoalFunds(deps, actor, payload.movement, prefix, [resolution]);
   if (isNegative(text)) return cancel(deps, actor, row);
+  const linked = actor.scope.accounts.find((a) => a.id === payload.linkedAccountId);
+  if (linked && isAffirmative(text)) {
+    return moveGoalFunds(deps, actor, { ...payload.movement, accountText: linked.name }, prefix, [
+      resolution,
+    ]);
+  }
   const transfer = /^(?:de\s+)?(.+?)\s+(?:para|pra|pro|>)\s+(.+)$/i.exec(text.trim());
   const accounts = actor.scope.accounts.filter((a) => a.kind !== 'credit_card');
   const known = (name: string) =>
@@ -133,6 +139,18 @@ function answerGoalLocation(
       prefix,
       [resolution],
     );
+  }
+  if (linked && known(text.trim().replace(/^d[aeo]\s+/i, ''))) {
+    const source = text.trim().replace(/^d[aeo]\s+/i, '');
+    if (normalizeText(source) !== linked.normalizedName) {
+      return moveGoalFunds(
+        deps,
+        actor,
+        { ...payload.movement, sourceAccountText: source, accountText: linked.name },
+        prefix,
+        [resolution],
+      );
+    }
   }
   if (known(text.trim())) {
     return moveGoalFunds(deps, actor, { ...payload.movement, accountText: text.trim() }, prefix, [

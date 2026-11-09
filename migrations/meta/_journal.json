@@ -29,6 +29,13 @@
       "when": 1794184531565,
       "tag": "0003_last_trauma",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794186442593,
+      "tag": "0004_zippy_lord_hawal",
+      "breakpoints": true
     }
   ]
 }
