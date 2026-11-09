@@ -1,0 +1,323 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "a1",
+      "kind": "conta",
+      "text": "Otto, tenho uma conta no Mercado Pago com R$ 2.000.",
+      "expect": { "intents": ["create_account"] }
+    },
+    {
+      "id": "a2",
+      "kind": "conta",
+      "text": "Jennifer tem uma conta no Nubank com R$ 750.",
+      "expect": { "intents": ["create_account"], "person": "" }
+    },
+    {
+      "id": "a3",
+      "kind": "conta",
+      "text": "Cria uma conta da Caixa para mim.",
+      "expect": { "intents": ["create_account"] }
+    },
+    {
+      "id": "a4",
+      "kind": "conta",
+      "text": "Temos uma conta conjunta com R$ 1.500.",
+      "expect": { "intents": ["create_account"] }
+    },
+    {
+      "id": "a5",
+      "kind": "padrao",
+      "text": "Meu Mercado Pago é meu banco principal.",
+      "expect": { "intents": ["set_default_account"] }
+    },
+    {
+      "id": "a6",
+      "kind": "conta",
+      "text": "Jennifer usa o PicPay como conta secundária.",
+      "expect": { "intents": ["create_account"] }
+    },
+    {
+      "id": "a7",
+      "kind": "saldo",
+      "text": "Otto, meu Nubank está com R$ 830 agora.",
+      "expect": { "intents": ["report_balance"] }
+    },
+    {
+      "id": "b1",
+      "kind": "credito",
+      "text": "Comprei um tênis de R$ 300 no cartão Nubank em 3 vezes.",
+      "expect": { "intents": ["register_expense"], "amounts": [30000], "installments": [3] }
+    },
+    {
+      "id": "b2",
+      "kind": "credito",
+      "text": "Jennifer comprou R$ 180 no PicPay em 1 vez.",
+      "expect": { "intents": ["register_expense"], "amounts": [18000] }
+    },
+    {
+      "id": "b3",
+      "kind": "credito",
+      "text": "Gastei R$ 950 no crédito pelo Santander, parcelado em 5 vezes.",
+      "expect": { "intents": ["register_expense"], "amounts": [95000], "installments": [5] }
+    },
+    {
+      "id": "b4",
+      "kind": "credito",
+      "text": "Paguei R$ 80 no cartão Mercado Pago.",
+      "expect": { "intents": ["register_expense"], "amounts": [8000] }
+    },
+    {
+      "id": "b5",
+      "kind": "credito",
+      "text": "Comprei R$ 90 no crédito à vista.",
+      "expect": { "intents": ["register_expense"], "amounts": [9000] }
+    },
+    {
+      "id": "b6",
+      "kind": "fatura",
+      "text": "Paguei a fatura do Santander de R$ 850 com meu Mercado Pago.",
+      "expect": { "intents": ["register_transfer"], "amounts": [85000], "kinds": ["card_payment"] }
+    },
+    {
+      "id": "b7",
+      "kind": "fatura",
+      "text": "Paguei R$ 300 da fatura do PicPay.",
+      "expect": { "intents": ["register_transfer"], "amounts": [30000], "kinds": ["card_payment"] }
+    },
+    {
+      "id": "b8",
+      "kind": "fatura",
+      "text": "Já paguei aquela parcela.",
+      "expect": { "intents": ["register_transfer", "unknown"] }
+    },
+    {
+      "id": "b9",
+      "kind": "fatura",
+      "text": "A fatura do Nubank foi paga.",
+      "expect": { "intents": ["register_transfer"], "kinds": ["card_payment"] }
+    },
+    {
+      "id": "c1",
+      "kind": "meta",
+      "text": "Otto, cria uma meta chamada Viagem com objetivo de R$ 8.000.",
+      "expect": { "intents": ["create_goal"] }
+    },
+    {
+      "id": "c2",
+      "kind": "meta",
+      "text": "Quero guardar R$ 50.000 para a entrada do apartamento.",
+      "expect": { "intents": ["create_goal", "set_goal"] }
+    },
+    {
+      "id": "c3",
+      "kind": "meta",
+      "text": "Crie uma reserva de emergência com objetivo de R$ 12.000.",
+      "expect": { "intents": ["create_goal"] }
+    },
+    {
+      "id": "c4",
+      "kind": "meta",
+      "text": "Quero comprar um computador de R$ 6.000 até dezembro de 2027.",
+      "expect": { "intents": ["create_goal"] }
+    },
+    {
+      "id": "c5",
+      "kind": "cofre",
+      "text": "Otto, nossa meta do apartamento fica no Cofre Mercado Pago.",
+      "expect": { "intents": ["allocate_goal"] }
+    },
+    {
+      "id": "c6",
+      "kind": "cofre",
+      "text": "Coloquei R$ 500 no cofre do Mercado Pago, vindo da minha conta principal.",
+      "expect": { "intents": ["register_goal_contribution", "register_transfer"] }
+    },
+    {
+      "id": "c7",
+      "kind": "cofre",
+      "text": "Guardei R$ 500 para o apartamento.",
+      "expect": { "intents": ["register_goal_contribution"] }
+    },
+    {
+      "id": "c8",
+      "kind": "cofre",
+      "text": "Guardei R$ 500 para a viagem no Cofre Mercado Pago.",
+      "expect": { "intents": ["register_goal_contribution"] }
+    },
+    {
+      "id": "c9",
+      "kind": "cofre",
+      "text": "Tirei R$ 200 da reserva de emergência.",
+      "expect": { "intents": ["withdraw_goal"] }
+    },
+    {
+      "id": "d1",
+      "kind": "consulta",
+      "text": "Otto, onde está o dinheiro do apartamento?",
+      "expect": { "intents": ["query_goal"] }
+    },
+    {
+      "id": "d2",
+      "kind": "consulta",
+      "text": "Quanto tenho guardado no Mercado Pago?",
+      "expect": { "intents": ["query_free_balance", "query_balance"] }
+    },
+    {
+      "id": "d3",
+      "kind": "consulta",
+      "text": "Quanto do meu Nubank está livre para gastar?",
+      "expect": { "intents": ["query_free_balance"] }
+    },
+    {
+      "id": "d4",
+      "kind": "consulta",
+      "text": "Quanto está reservado para a viagem?",
+      "expect": { "intents": ["query_goal"] }
+    },
+    {
+      "id": "d5",
+      "kind": "consulta",
+      "text": "Quanto precisamos guardar por mês para alcançar a meta?",
+      "expect": { "intents": ["query_goal"] }
+    },
+    {
+      "id": "d6",
+      "kind": "consulta",
+      "text": "Quanto falta para a entrada do apartamento?",
+      "expect": { "intents": ["query_goal"] }
+    },
+    {
+      "id": "d7",
+      "kind": "consulta",
+      "text": "Quanto temos no apartamento?",
+      "expect": { "intents": ["query_goal"] }
+    },
+    {
+      "id": "d8",
+      "kind": "consulta",
+      "text": "Onde está nosso dinheiro reservado?",
+      "expect": { "intents": ["query_goal"] }
+    },
+    {
+      "id": "d9",
+      "kind": "consulta",
+      "text": "Quanto eu ainda posso gastar este mês?",
+      "expect": { "intents": ["query_free_balance", "query_budget"] }
+    },
+    {
+      "id": "d10",
+      "kind": "consulta",
+      "text": "Quanto Jennifer gastou no cartão PicPay?",
+      "expect": { "intents": ["query_spending"], "person": "Jennifer" }
+    },
+    {
+      "id": "d11",
+      "kind": "consulta",
+      "text": "Quais faturas ainda estão abertas?",
+      "expect": { "intents": ["query_invoices"] }
+    },
+    {
+      "id": "d12",
+      "kind": "consulta",
+      "text": "Qual é a nossa situação financeira hoje?",
+      "expect": { "intents": ["query_status_couple"] }
+    },
+    {
+      "id": "e1",
+      "kind": "renda",
+      "text": "Otto, meu salário é R$ 4.000 e cai todo dia 5 no Mercado Pago.",
+      "expect": { "intents": ["register_commitment"] }
+    },
+    {
+      "id": "e2",
+      "kind": "renda",
+      "text": "Jennifer recebe R$ 2.500 no Nubank todo dia 10.",
+      "expect": { "intents": ["register_commitment"] }
+    },
+    {
+      "id": "e3",
+      "kind": "renda",
+      "text": "Também recebo R$ 600 por mês de um serviço freelance.",
+      "expect": { "intents": ["register_commitment"] }
+    },
+    {
+      "id": "e4",
+      "kind": "renda",
+      "text": "Recebi R$ 350 de um trabalho extra.",
+      "expect": { "intents": ["register_income"], "amounts": [35000] }
+    },
+    {
+      "id": "e5",
+      "kind": "renda",
+      "text": "Meu salário caiu hoje.",
+      "expect": { "intents": ["register_income"] }
+    },
+    {
+      "id": "e6",
+      "kind": "renda",
+      "text": "Recebi só R$ 2.000 do salário este mês.",
+      "expect": { "intents": ["register_income"], "amounts": [200000] }
+    },
+    {
+      "id": "e7",
+      "kind": "renda",
+      "text": "Este mês recebi um bônus de R$ 900.",
+      "expect": { "intents": ["register_income"], "amounts": [90000] }
+    },
+    {
+      "id": "e8",
+      "kind": "renda",
+      "text": "Recebi meu salário no Nubank.",
+      "expect": { "intents": ["register_income"] }
+    },
+    {
+      "id": "f1",
+      "kind": "padrao",
+      "text": "Meu banco principal é Mercado Pago.",
+      "expect": { "intents": ["set_default_account"] }
+    },
+    {
+      "id": "f2",
+      "kind": "padrao",
+      "text": "Jennifer usa Nubank como banco principal.",
+      "expect": { "intents": ["set_default_account"] }
+    },
+    {
+      "id": "f3",
+      "kind": "padrao",
+      "text": "Meu cartão padrão é Santander.",
+      "expect": { "intents": ["set_default_card"] }
+    },
+    {
+      "id": "f4",
+      "kind": "conta",
+      "text": "Jennifer tem PicPay e Nubank.",
+      "expect": { "intents": ["create_account", "not_financial", "unknown"] }
+    },
+    {
+      "id": "f5",
+      "kind": "credito",
+      "text": "Comprei R$ 300 no crédito em 3 vezes.",
+      "expect": { "intents": ["register_expense"], "amounts": [30000], "installments": [3] }
+    },
+    {
+      "id": "f6",
+      "kind": "fatura",
+      "text": "Paguei R$ 800 da fatura do Santander.",
+      "expect": { "intents": ["register_transfer"], "amounts": [80000], "kinds": ["card_payment"] }
+    },
+    {
+      "id": "f7",
+      "kind": "meta",
+      "text": "Quero criar uma meta chamada Computador de R$ 6.000.",
+      "expect": { "intents": ["create_goal"] }
+    },
+    {
+      "id": "g1",
+      "kind": "nao",
+      "text": "comprei por R$ 90 uma blusa",
+      "expect": { "intents": ["register_expense"], "amounts": [9000] }
+    }
+  ]
+}

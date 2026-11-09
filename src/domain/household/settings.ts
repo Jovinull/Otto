@@ -18,6 +18,10 @@ export const HouseholdSettings = z.object({
   // 100 significa "atingiu o limite"; OVER_LIMIT_THRESHOLD significa "ultrapassou".
   budgetAlertThresholds: z.array(z.number().int().min(1).max(100)).default([80, 100]),
   billReminderDaysAhead: z.number().int().min(0).max(15).default(3),
+  // 0 = domingo. Dia do resumo e das observacoes da semana.
+  weeklyWeekday: z.number().int().min(0).max(6).default(1),
+  // A partir deste dia do mes, compara o guardado com o pretendido.
+  goalFollowUpDay: z.number().int().min(1).max(28).default(20),
   notifications: NotificationSettings.prefault({}),
 });
 export type HouseholdSettings = z.infer<typeof HouseholdSettings>;

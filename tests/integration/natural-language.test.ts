@@ -137,7 +137,7 @@ describe('cadastro em linguagem natural', () => {
       },
     });
     expect(await h.count('financial_transactions')).toBe(0);
-    expect(await say('/rendas')).toContain('MercadoPago');
+    expect(await say('/compromissos')).toContain('MercadoPago');
   });
 
   it('renda mensal sem dia fica cadastrada sem perguntar a recorrencia', async () => {
@@ -247,7 +247,7 @@ describe('metas em linguagem natural', () => {
 
   it('retirada e consulta de onde esta o dinheiro', async () => {
     await say('/meta criar Reserva de emergencia valor=12000');
-    await say('/alocar Reserva de emergencia 500 @MercadoPago');
+    await say('/aporte Reserva de emergencia 500 @MercadoPago existente');
     await ai('tirei R$ 200 da reserva de emergência.', 'withdraw_goal', {
       goal: goal({
         goal_name: 'reserva de emergencia',

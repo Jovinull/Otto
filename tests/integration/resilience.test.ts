@@ -514,7 +514,7 @@ describe('mensagens proativas', () => {
 
   it('lembra contas no fuso local e nao repete', async () => {
     h.setNow(MONDAY_9AM);
-    await h.say('/recorrente despesa 110 dia=12 internet');
+    await h.say('/recorrente 110 dia=12 internet');
     h.messaging.sent = [];
     await runHourly(h.fresh(), MONDAY_9AM);
     expect(h.messaging.last()).toContain('internet');
@@ -526,7 +526,7 @@ describe('mensagens proativas', () => {
   it('nao envia nada antes do horario local', async () => {
     const earlyUtc = Date.UTC(2026, 10, 9, 8, 0); // 05:00 em Maceio.
     h.setNow(earlyUtc);
-    await h.say('/recorrente despesa 110 dia=12 internet');
+    await h.say('/recorrente 110 dia=12 internet');
     h.messaging.sent = [];
     await runHourly(h.fresh(), earlyUtc);
     expect(h.messaging.sent).toHaveLength(0);
@@ -534,7 +534,7 @@ describe('mensagens proativas', () => {
 
   it('conta paga nao gera lembrete', async () => {
     h.setNow(MONDAY_9AM);
-    await h.say('/recorrente despesa 110 dia=12 internet');
+    await h.say('/recorrente 110 dia=12 internet');
     await h.say('/gasto 110 internet');
     h.messaging.sent = [];
     await runHourly(h.fresh(), MONDAY_9AM);
@@ -591,7 +591,7 @@ describe('mensagens proativas', () => {
 
   it('notificacoes podem ser desativadas', async () => {
     h.setNow(MONDAY_9AM);
-    await h.say('/recorrente despesa 110 dia=12 internet');
+    await h.say('/recorrente 110 dia=12 internet');
     await h.say('/notificacoes off');
     h.messaging.sent = [];
     await runHourly(h.fresh(), MONDAY_9AM);

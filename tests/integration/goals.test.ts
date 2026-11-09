@@ -89,9 +89,9 @@ describe('dinheiro de metas nas contas', () => {
   it('reserva em tres contas nao duplica o patrimonio', async () => {
     await say('/addconta corrente Terceira saldo=1000');
     await say('/editconta Principal saldo=1000');
-    await say('/alocar Apartamento 1000 @Principal');
-    await say('/alocar Apartamento 1000 @Secundaria');
-    await say('/alocar Apartamento 1000 @Terceira');
+    await say('/aporte Apartamento 1000 @Principal existente');
+    await say('/aporte Apartamento 1000 @Secundaria existente');
+    await say('/aporte Apartamento 1000 @Terceira existente');
     const accounts = await say('/contas');
     expect(accounts).toContain('Patrimônio em contas: R$ 3.000,00');
     expect(accounts).toContain('Reservado para metas nessas contas: R$ 3.000,00');
@@ -119,9 +119,9 @@ describe('dinheiro de metas nas contas', () => {
   });
 
   it('nao reserva o mesmo dinheiro duas vezes para metas diferentes', async () => {
-    await say('/alocar Apartamento 800 @Secundaria');
-    expect(await say('/alocar Viagem 300 @Secundaria')).toContain('não dá para reservar');
-    expect(await say('/alocar Viagem 200 @Secundaria')).toContain('Reserva confirmada');
+    await say('/aporte Apartamento 800 @Secundaria existente');
+    expect(await say('/aporte Viagem 300 @Secundaria existente')).toContain('não dá para reservar');
+    expect(await say('/aporte Viagem 200 @Secundaria existente')).toContain('Reserva confirmada');
     const accounts = await say('/contas');
     expect(accounts).toContain('reservado R$ 1.000,00 · livre R$ 0,00');
     expect(await h.count('goal_contributions')).toBe(2);
@@ -129,19 +129,19 @@ describe('dinheiro de metas nas contas', () => {
 
   it('saldo desconhecido permite reservar avisando que nao validou', async () => {
     await say('/addconta corrente Misteriosa');
-    const reply = await say('/alocar Viagem 200 @Misteriosa');
+    const reply = await say('/aporte Viagem 200 @Misteriosa existente');
     expect(reply).toContain('não consegui validar');
     expect(await say('/contas')).toContain('sem como validar');
   });
 
   it('cartao nao guarda reserva', async () => {
     await say('/addconta cartao Roxo fecha=3 vence=10');
-    expect(await say('/alocar Viagem 200 @Roxo')).toContain('Não achei');
+    expect(await say('/aporte Viagem 200 @Roxo existente')).toContain('Não achei');
   });
 
   it('retirada limitada ao que existe e pergunta quando ha varios locais', async () => {
-    await say('/alocar Viagem 300 @Principal');
-    await say('/alocar Viagem 200 @Secundaria');
+    await say('/aporte Viagem 300 @Principal existente');
+    await say('/aporte Viagem 200 @Secundaria existente');
     expect(await say('/retirada Viagem 250')).toContain('De onde sai?');
     expect(await say('/retirada Viagem 400 @Secundaria')).toContain('só há R$ 200,00');
     const reply = await say('/retirada Viagem 100 @Secundaria');
@@ -150,7 +150,7 @@ describe('dinheiro de metas nas contas', () => {
   });
 
   it('gasto que consome dinheiro reservado precisa de confirmacao', async () => {
-    await say('/alocar Viagem 900 @Secundaria');
+    await say('/aporte Viagem 900 @Secundaria existente');
     const reply = await say('/gasto 200 mercado @Secundaria');
     expect(reply).toContain('reservados em Secundaria para Viagem');
     expect(await h.count('financial_transactions')).toBe(0);
@@ -160,13 +160,13 @@ describe('dinheiro de metas nas contas', () => {
   });
 
   it('gasto com saldo livre segue direto', async () => {
-    await say('/alocar Viagem 100 @Secundaria');
+    await say('/aporte Viagem 100 @Secundaria existente');
     await say('/gasto 200 mercado @Secundaria');
     expect(await h.count('financial_transactions')).toBe(1);
   });
 
   it('transferir dinheiro reservado para a meta pede confirmacao', async () => {
-    await say('/alocar Viagem 3000 @Principal');
+    await say('/aporte Viagem 3000 @Principal existente');
     const reply = await say('/aporte Apartamento 500 @Cofre de:Principal');
     expect(reply).toContain('Registrar mesmo assim?');
     expect(await h.count('financial_transactions')).toBe(0);
@@ -177,8 +177,8 @@ describe('dinheiro de metas nas contas', () => {
 
   it('desfazer o aporte desfaz tambem a transferencia', async () => {
     const reply = await say('/aporte Apartamento 500 @Cofre de:Principal');
-    const code = /desfazer_aporte (\S+)/.exec(reply)![1]!;
-    await say(`/desfazer_aporte ${code}`);
+    const code = /estornar (\S+)/.exec(reply)![1]!;
+    await say(`/estornar ${code}`);
     expect(await confirm()).toContain('A transferência entre as contas também foi desfeita');
     expect(await say('/contas')).toContain('Principal (Felipe): R$ 3.000,00');
     expect(await h.count('goal_contributions', "status = 'confirmed'")).toBe(0);
@@ -193,7 +193,7 @@ describe('dinheiro de metas nas contas', () => {
   });
 
   it('arquivar a meta libera a reserva sem mover dinheiro', async () => {
-    await say('/alocar Viagem 500 @Principal');
+    await say('/aporte Viagem 500 @Principal existente');
     await say('/meta remover Viagem');
     await confirm();
     const accounts = await say('/contas');
@@ -202,7 +202,7 @@ describe('dinheiro de metas nas contas', () => {
   });
 
   it('conta com reserva nao pode ser arquivada', async () => {
-    await say('/alocar Viagem 500 @Principal');
+    await say('/aporte Viagem 500 @Principal existente');
     expect(await say('/removerconta Principal')).toContain('Libere com /retirada');
   });
 

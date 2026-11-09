@@ -112,6 +112,7 @@ export async function exportHousehold(deps: Deps, householdId: string) {
     budgets,
     goals,
     contributions,
+    reconciliations,
     recurring,
     audit,
   ] = await deps.db.batch([
@@ -147,6 +148,10 @@ export async function exportHousehold(deps: Deps, householdId: string) {
       .where(eq(schema.goalContributions.householdId, householdId)),
     deps.db
       .select()
+      .from(EXPORT_TABLES.balance_reconciliations)
+      .where(eq(schema.balanceReconciliations.householdId, householdId)),
+    deps.db
+      .select()
       .from(EXPORT_TABLES.recurring_entries)
       .where(eq(schema.recurringEntries.householdId, householdId)),
     deps.db
@@ -165,6 +170,7 @@ export async function exportHousehold(deps: Deps, householdId: string) {
     budgets,
     financial_goals: goals,
     goal_contributions: contributions,
+    balance_reconciliations: reconciliations,
     recurring_entries: recurring,
     audit_events: audit,
   };

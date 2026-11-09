@@ -22,7 +22,6 @@ import {
   findCategoryByText,
   findMember,
   markNextInstallmentPaid,
-  requestContributionVoid,
   setBudget,
   setInstallmentFirstDue,
   setMemberDefaultStatement,
@@ -37,17 +36,7 @@ import {
   requestArchiveAccount,
 } from '../commands/editing';
 import { configureIncome, receiveIncome } from '../commands/income';
-import {
-  accountFreeReport,
-  coupleStatus,
-  incomeSourcesReport,
-  myAccountsReport,
-  myBalancesReport,
-  myCardsReport,
-  myGoalsReport,
-  personalStatus,
-  resolveMember,
-} from '../queries/status';
+import { coupleStatus, myAccountsReport, personalStatus, resolveMember } from '../queries/status';
 import type { GoalMovement } from '../commands/goals';
 import {
   createGoal,
@@ -59,7 +48,7 @@ import {
 import { reportBalance } from '../commands/reconcile';
 import { recordDrafts } from '../commands/record-transactions';
 import { auditStatement } from '../commands/shared';
-import type { Actor, Deps, Effect } from '../context';
+import type { Actor, Deps, Effect, Scope } from '../context';
 import { replyOnly } from '../context';
 import { shortId } from '../queries/finance';
 import {
@@ -71,7 +60,6 @@ import {
   singleGoalReport,
   incomeForecastReport,
   monthReport,
-  peopleReport,
   recentReport,
   weekReport,
 } from '../queries/reports';
@@ -96,6 +84,29 @@ function splitOptions(args: readonly string[]): ParsedOptions {
     else rest.push(arg);
   }
   return { options, rest };
+}
+
+/** "@Mercado Pago" chega em dois pedacos: junta quando formam o nome de uma conta. */
+function joinAccountTokens(args: readonly string[], accounts: Scope['accounts']): string[] {
+  const names = new Set(accounts.map((a) => a.normalizedName));
+  const joined: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    const prefix = token.startsWith('@') ? 1 : normalizeText(token).startsWith('de:') ? 3 : 0;
+    let end = i + 1;
+    if (prefix > 0 && token.length > prefix) {
+      for (let j = args.length; j > i + 1; j--) {
+        const candidate = [token.slice(prefix), ...args.slice(i + 1, j)].join(' ');
+        if (names.has(normalizeText(candidate))) {
+          end = j;
+          break;
+        }
+      }
+    }
+    joined.push(args.slice(i, end).join(' '));
+    i = end - 1;
+  }
+  return joined;
 }
 
 const DATE_TOKEN = /^(hoje|ontem|anteontem|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i;
@@ -123,7 +134,8 @@ function buildDraftFromArgs(
   for (const token of tokens) {
     const lower = normalizeText(token);
     if (token.startsWith('#') && token.length > 1) category = normalizeText(token.slice(1));
-    else if (token.startsWith('@') && token.length > 1) account = token.slice(1);
+    else if (token.startsWith('@') && token.length > 1)
+      account = token.slice(1).replaceAll('_', ' ');
     else if (DATE_TOKEN.test(token)) dateText = token;
     else if (/^\d{1,2}x$/i.test(token)) installmentsCount = Number(token.slice(0, -1));
     else if (lower === 'cartao') isCredit = true;
@@ -193,6 +205,66 @@ const NOTIFICATION_KEYS = {
   dicas: 'behavioralTips',
 } as const;
 
+const WEEKDAY_NAMES = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+
+function notificationsText(settings: Scope['settings']): string {
+  const { notifications: n } = settings;
+  const state = (on: boolean) => (on ? 'ligado' : 'desligado');
+  if (!n.enabled) return 'Notificações desativadas. Para ligar: /notificacoes on';
+  return [
+    'Notificações:',
+    `• contas: ${state(n.billReminders)}, avisa ${settings.billReminderDaysAhead} dias antes`,
+    `• orcamento: ${state(n.budgetAlerts)}, em ${settings.budgetAlertThresholds.join('%, ')}%`,
+    `• semanal: ${state(n.weeklySummary)}, toda ${WEEKDAY_NAMES[settings.weeklyWeekday]}`,
+    `• mensal: ${state(n.monthlyClosing)}, dia 1`,
+    `• meta: ${state(n.goalFollowUp)}, a partir do dia ${settings.goalFollowUpDay}`,
+    `• dicas: ${state(n.behavioralTips)}, junto com o semanal`,
+    'Ligar ou desligar: /notificacoes contas on|off',
+    'Ajustar: /notificacoes contas dias=5 · orcamento avisos=70,100 · semanal dia=dom · meta dia=25',
+  ].join('\n');
+}
+
+type ScheduleChange = { values: Partial<Scope['settings']>; message: string };
+
+function notificationSchedule(
+  target: string,
+  options: Map<string, string>,
+): ScheduleChange | string {
+  const usage =
+    'Exemplos: /notificacoes contas dias=5 · orcamento avisos=70,100 · semanal dia=dom · meta dia=25';
+  if (target === 'contas' && options.has('dias')) {
+    const days = Number(options.get('dias'));
+    if (!Number.isInteger(days) || days < 0 || days > 15) return 'Use dias de 0 a 15.';
+    return {
+      values: { billReminderDaysAhead: days },
+      message: `Contas: aviso ${days} dias antes.`,
+    };
+  }
+  if (target === 'orcamento' && options.has('avisos')) {
+    const values = options.get('avisos')!.split(',').map(Number);
+    if (values.some((v) => !Number.isInteger(v) || v < 1 || v > 100)) return 'Use de 1 a 100.';
+    const thresholds = [...new Set(values)].sort((a, b) => a - b);
+    return {
+      values: { budgetAlertThresholds: thresholds },
+      message: `Orçamento: avisos em ${thresholds.join('%, ')}%.`,
+    };
+  }
+  if (target === 'semanal' && options.has('dia')) {
+    const day = WEEKDAY_NAMES.indexOf(normalizeText(options.get('dia')!).slice(0, 3));
+    if (day < 0) return 'Use seg, ter, qua, qui, sex, sab ou dom.';
+    return { values: { weeklyWeekday: day }, message: `Semanal: toda ${WEEKDAY_NAMES[day]}.` };
+  }
+  if (target === 'meta' && options.has('dia')) {
+    const day = Number(options.get('dia'));
+    if (!Number.isInteger(day) || day < 1 || day > 28) return 'Use um dia de 1 a 28.';
+    return {
+      values: { goalFollowUpDay: day },
+      message: `Metas: acompanhamento a partir do dia ${day}.`,
+    };
+  }
+  return usage;
+}
+
 function toneLabel(tone: Tone): string {
   return { neutral: 'neutro', friendly: 'amigável', firm: 'firme' }[tone];
 }
@@ -207,17 +279,14 @@ const WRITE_COMMANDS = new Set([
   'orcamento',
   'meta',
   'aporte',
-  'alocar',
   'vincular',
   'saldo',
   'retirada',
-  'desfazer_aporte',
   'recorrente',
   'renda',
   'recebi',
   'addconta',
   'addcategoria',
-  'padrao',
   'contapadrao',
   'cartaopadrao',
   'parcela_data',
@@ -237,9 +306,10 @@ export async function handleCommand(
   deps: Deps,
   actor: Actor,
   command: string,
-  args: string[],
+  rawArgs: string[],
 ): Promise<Effect> {
   const { scope } = actor;
+  const args = joinAccountTokens(rawArgs, scope.accounts);
   const period = periodOf(actor.today);
   const { options, rest } = splitOptions(args);
 
@@ -265,10 +335,7 @@ export async function handleCommand(
     case 'configurar':
       if (!canWrite(actor.member)) return replyOnly(await onboardingChecklist(deps, actor));
       return onboardingCommand(deps, actor, rest);
-    case 'configuracoes':
-      return replyOnly(await onboardingChecklist(deps, actor));
-    case 'resumo':
-    case 'mes': {
+    case 'resumo': {
       const target = rest[0] ? parseMonthExpression(rest.join(' '), actor.today) : period;
       if (!target) return replyOnly('Mês inválido. Use MM/AAAA, ex.: 11/2026.');
       return replyOnly(await monthReport(deps, scope, target));
@@ -277,8 +344,6 @@ export async function handleCommand(
       return replyOnly(await weekReport(deps, scope, actor.today));
     case 'comparar':
       return replyOnly(await comparisonReport(deps, scope, period, actor.today));
-    case 'individual':
-      return replyOnly(await peopleReport(deps, scope, period));
     case 'contas':
       return replyOnly(await balancesReport(deps, scope));
     case 'compromissos':
@@ -299,7 +364,6 @@ export async function handleCommand(
     case 'metas':
       return replyOnly(await goalReport(deps, scope, actor.today));
     case 'fatura':
-    case 'faturas':
       return replyOnly(
         await invoicesReport(deps.db, scope, actor.today, rest.length ? rest.join(' ') : null),
       );
@@ -404,6 +468,15 @@ export async function handleCommand(
         if (rest.length < 2) return replyOnly('Formato: /meta remover NOME');
         return requestGoalRemoval(deps, actor, rest.slice(1).join(' '));
       }
+      if (rest.length > 0 && options.size > 0 && action !== 'status') {
+        return editGoal(deps, actor, rest.join(' '), {
+          name: options.get('nome'),
+          target: options.get('valor'),
+          deadline: options.get('prazo'),
+          planned: options.get('aporte'),
+          notes: options.get('nota'),
+        });
+      }
       if (rest.length > 0) {
         const name = action === 'status' ? rest.slice(1).join(' ') : rest.join(' ');
         return replyOnly(await singleGoalReport(deps, scope, actor.today, name));
@@ -420,17 +493,17 @@ export async function handleCommand(
       });
     }
     case 'aporte':
-    case 'alocar':
     case 'retirada': {
       const movement = parseGoalMovement(command, args);
       if (typeof movement === 'string') return replyOnly(movement);
       return moveGoalFunds(deps, actor, movement, actor.eventId);
     }
     case 'vincular': {
-      const account = args.find((t) => t.startsWith('@') && t.length > 1);
-      const goalName = rest.filter((t) => !t.startsWith('@')).join(' ');
-      if (!account || !goalName) return replyOnly('Formato: /vincular META @Conta');
-      return linkGoalAccount(deps, actor, goalName, account.slice(1));
+      // A conta pode ainda nao existir: tudo depois do @ e o nome dela.
+      const at = rest.findIndex((t) => t.startsWith('@') && t.length > 1);
+      const goalName = rest.slice(0, Math.max(at, 0)).join(' ');
+      if (at < 0 || !goalName) return replyOnly('Formato: /vincular META @Conta');
+      return linkGoalAccount(deps, actor, goalName, rest.slice(at).join(' ').slice(1));
     }
     case 'saldo': {
       const amount = rest.at(-1);
@@ -438,20 +511,12 @@ export async function handleCommand(
         return replyOnly('Formato: /saldo CONTA VALOR, ex.: /saldo Nubank 830,00');
       return reportBalance(deps, actor, rest.slice(0, -1).join(' '), amount);
     }
-    case 'desfazer_aporte':
-      if (!rest[0]) return replyOnly('Formato: /desfazer_aporte CODIGO');
-      return requestContributionVoid(deps, actor, rest[0]);
     case 'recorrente': {
-      const [kindText, amountText, ...nameParts] = rest;
-      const kind =
-        normalizeText(kindText ?? '') === 'despesa'
-          ? 'expense'
-          : normalizeText(kindText ?? '') === 'receita'
-            ? 'income'
-            : null;
-      if (!kind || !amountText || nameParts.length === 0) {
+      const [amountText, ...nameParts] = rest;
+      const kind = 'expense' as const;
+      if (!amountText || nameParts.length === 0) {
         return replyOnly(
-          'Formato: /recorrente despesa 1200 dia=5 aluguel (use ? se o valor variar; util=5 para dia útil).',
+          'Formato: /recorrente 1200 dia=5 aluguel (use ? se o valor variar; util=5 para dia útil). Renda é com /renda.',
         );
       }
       const schedule = scheduleFromOptions(options);
@@ -487,8 +552,6 @@ export async function handleCommand(
         irregular,
       });
     }
-    case 'rendas':
-      return replyOnly(await incomeSourcesReport(deps, actor));
     case 'recebi': {
       const tokens = rest.filter((t) => !t.startsWith('@'));
       const amountIndex = tokens.findIndex((t) => parseBRL(t).status === 'ok');
@@ -502,23 +565,17 @@ export async function handleCommand(
       });
     }
     case 'statuspessoal':
-    case 'minhascontas':
-    case 'meusaldos':
-    case 'meuscartoes':
-    case 'minhasmetas': {
+    case 'minhascontas': {
       const member = resolveMember(actor, rest.join(' ') || null);
       if (typeof member === 'string') return replyOnly(member);
-      if (command === 'statuspessoal') return replyOnly(await personalStatus(deps, actor, member));
-      if (command === 'minhascontas') return replyOnly(await myAccountsReport(deps, actor, member));
-      if (command === 'meusaldos') return replyOnly(await myBalancesReport(deps, actor, member));
-      if (command === 'meuscartoes') return replyOnly(await myCardsReport(deps, actor, member));
-      return replyOnly(await myGoalsReport(deps, actor, member));
+      return replyOnly(
+        command === 'statuspessoal'
+          ? await personalStatus(deps, actor, member)
+          : await myAccountsReport(deps, actor, member),
+      );
     }
     case 'statuscasal':
       return replyOnly(await coupleStatus(deps, actor));
-    case 'livre':
-      if (rest.length === 0) return replyOnly('Formato: /livre CONTA');
-      return replyOnly(await accountFreeReport(deps, actor, rest.join(' ')));
     case 'addconta': {
       const kind =
         ACCOUNT_KIND_ALIASES[normalizeText(rest[0] ?? '') as keyof typeof ACCOUNT_KIND_ALIASES];
@@ -558,7 +615,6 @@ export async function handleCommand(
       }
       return addCategory(deps, actor, rest.slice(0, -1).join(' '), nature);
     }
-    case 'padrao':
     case 'contapadrao':
       return defaultAccountCommand(deps, actor, 'account', rest, options.get('de') ?? null);
     case 'cartaopadrao':
@@ -636,10 +692,13 @@ export async function handleCommand(
     }
     case 'notificacoes': {
       const { notifications } = scope.settings;
-      if (rest.length === 0) {
-        return replyOnly(
-          `Notificações ${notifications.enabled ? 'ativas' : 'desativadas'}. Ajuste: /notificacoes on|off ou /notificacoes contas|orcamento|semanal|mensal|meta|dicas on|off`,
-        );
+      if (rest.length === 0 && options.size === 0) {
+        return replyOnly(notificationsText(scope.settings));
+      }
+      if (options.size > 0) {
+        const change = notificationSchedule(normalizeText(rest[0] ?? ''), options);
+        if (typeof change === 'string') return replyOnly(change);
+        return saveSettings(deps, actor, { ...scope.settings, ...change.values }, change.message);
       }
       const flag = normalizeText(rest.at(-1)!);
       if (flag !== 'on' && flag !== 'off') return replyOnly('Use on ou off.');
@@ -733,34 +792,43 @@ export function defaultAccountCommand(
   };
 }
 
-/** /aporte [META] VALOR [@Conta] [de:Origem] [data]. Sem meta, vale a do apartamento. */
+/** /aporte [META] VALOR [@Conta] [de:Origem] [data] [existente]. Sem meta, vale o apartamento. */
 function parseGoalMovement(command: string, args: readonly string[]): GoalMovement | string {
-  const usage = `Formato: /${command} META VALOR [@Conta]${command === 'retirada' ? '' : ' [de:Origem]'}`;
-  const tokens = [...args];
-  const amountIndex = tokens.findIndex((t) => {
-    const parsed = parseBRL(t.replace(/^r\$/i, ''));
-    return parsed.status === 'ok' && !t.startsWith('@') && !DATE_TOKEN.test(t);
+  const usage = `Formato: /${command} META VALOR [@Conta]${command === 'retirada' ? '' : ' [de:Origem] [existente]'}`;
+  const tokens = args.filter((t) => t.toLowerCase() !== 'r$');
+  const isMarker = (token: string) =>
+    token.startsWith('@') ||
+    normalizeText(token).startsWith('de:') ||
+    normalizeText(token) === 'existente' ||
+    DATE_TOKEN.test(token);
+  // O ultimo numero e o valor: o nome da meta pode ter numero ("Viagem 2027").
+  let amountIndex = -1;
+  tokens.forEach((token, index) => {
+    if (!isMarker(token) && parseBRL(token.replace(/^r\$/i, '')).status === 'ok') {
+      amountIndex = index;
+    }
   });
   if (amountIndex < 0) return usage;
-  const goalText = tokens.slice(0, amountIndex).join(' ') || null;
   let accountText: string | null = null;
   let sourceAccountText: string | null = null;
   let dateText: string | null = null;
+  let existing = false;
   for (const token of tokens.slice(amountIndex + 1)) {
     if (token.startsWith('@') && token.length > 1) accountText = token.slice(1);
     else if (normalizeText(token).startsWith('de:') && token.length > 3) {
       sourceAccountText = token.slice(3);
     } else if (DATE_TOKEN.test(token)) dateText = token;
+    else if (normalizeText(token) === 'existente' && command === 'aporte') existing = true;
     else return usage;
   }
   return {
-    goalText,
+    goalText: tokens.slice(0, amountIndex).join(' ') || null,
     amountText: tokens[amountIndex]!,
     direction: command === 'retirada' ? 'out' : 'in',
     accountText,
     sourceAccountText,
     dateText,
-    kind: command === 'alocar' ? 'allocation' : 'contribution',
+    kind: existing ? 'allocation' : 'contribution',
     requireLocation: false,
   };
 }

@@ -24,14 +24,14 @@ beforeEach(async () => {
   await say('/addconta corrente MercadoPago saldo=1000 padrao');
   await say('/addconta corrente Nubank saldo=200');
   await say('/addconta corrente Nubank saldo=500 dono=Jennifer');
-  await say('/padrao Nubank', JENNIFER_ID);
+  await say('/contapadrao Nubank', JENNIFER_ID);
 });
 
 describe('fontes de renda', () => {
   it('configurar nao registra recebimento', async () => {
     await say('/renda 4000 dia=5 @MercadoPago');
     expect(await incomes()).toBe(0);
-    const report = await say('/rendas');
+    const report = await say('/compromissos');
     expect(report).toContain('Salário (Felipe): R$ 4.000,00');
     expect(report).toContain('MercadoPago');
     expect(report).toContain('a receber');
@@ -44,17 +44,17 @@ describe('fontes de renda', () => {
     expect(await say('/contas')).toContain('MercadoPago (Felipe): R$ 5.000,00');
     expect(await say('/recebi')).toContain('já está marcado como recebido');
     expect(await incomes()).toBe(1);
-    expect(await say('/rendas')).toContain('✅ recebido');
+    expect(await say('/compromissos')).toContain('✅ recebido');
   });
 
   it('recebimento parcial nao quita e o resto usa o que falta', async () => {
     await say('/renda 4000 dia=5 @MercadoPago');
     expect(await say('/recebi salario 2000')).toContain('Ainda não marquei');
-    expect(await say('/rendas')).toContain('a receber');
+    expect(await say('/compromissos')).toContain('a receber');
     // Mesmo valor minutos depois parece reenvio: o Otto confere antes de registrar.
     expect(await say('/recebi salario')).toContain('Parece repetido');
     await confirm();
-    expect(await say('/rendas')).toContain('✅ recebido');
+    expect(await say('/compromissos')).toContain('✅ recebido');
     expect(await incomes()).toBe(2);
   });
 
@@ -96,9 +96,9 @@ describe('status pessoal e do casal', () => {
     await say('/addconta cartao Roxo fecha=3 vence=10 limite=5000 padrao');
     await say('/renda 4000 dia=5 @MercadoPago');
     await say('/renda 2500 dia=10 @Nubank de=Jennifer');
-    await say('/recorrente despesa 1200 dia=20 aluguel');
+    await say('/recorrente 1200 dia=20 aluguel');
     await say('/meta criar Viagem valor=8000');
-    await say('/alocar Viagem 300 @MercadoPago');
+    await say('/aporte Viagem 300 @MercadoPago existente');
   });
 
   it('pessoal mostra saldo, reserva e cartao sem chamar limite de dinheiro', async () => {
@@ -134,24 +134,17 @@ describe('status pessoal e do casal', () => {
 
   it('listas pessoais separam o que e de cada um', async () => {
     const accounts = await say('/minhascontas');
-    expect(accounts).toContain('MercadoPago ⭐ padrão');
-    expect(accounts).toContain('Casa (casal)');
-    expect(await say('/meusaldos', JENNIFER_ID)).toContain('Nubank: R$ 500,00');
-    expect(await say('/meuscartoes')).toContain('Roxo ⭐');
-    expect(await say('/meuscartoes', JENNIFER_ID)).toContain('ainda não tem cartões');
-    expect(await say('/minhasmetas')).toContain('Viagem: R$ 300,00 de R$ 8.000,00');
-  });
-
-  it('livre em conta desconta so a reserva e explica', async () => {
-    const text = await say('/livre MercadoPago');
-    expect(text).toContain('saldo R$ 1.000,00');
-    expect(text).toContain('Viagem R$ 300,00');
-    expect(text).toContain('Livre de metas: R$ 700,00');
+    expect(accounts).toContain('MercadoPago ⭐');
+    expect(accounts).toContain('Do casal:');
+    expect(await say('/minhascontas', JENNIFER_ID)).toContain('Nubank ⭐: R$ 500,00');
+    expect(await say('/minhascontas')).toContain('Roxo ⭐');
+    expect(await say('/minhascontas', JENNIFER_ID)).not.toContain('Roxo');
+    expect(await say('/metas')).toContain('Reservado: R$ 300,00');
   });
 
   it('divida informada no cartao aparece na fatura', async () => {
     await say('/addconta cartao Velho fecha=3 vence=10 divida=450');
-    expect(await say('/meuscartoes')).toContain('Velho: a pagar R$ 450,00');
+    expect(await say('/minhascontas')).toContain('Velho: a pagar R$ 450,00');
   });
 
   it('status de pessoa desconhecida responde sem erro', async () => {

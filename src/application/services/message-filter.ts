@@ -91,9 +91,8 @@ const FINANCIAL_TERMS = [
   'tirei',
   'retirei',
   'coloquei',
-  'caiu',
-  'status',
-  'situacao',
+  'financeira',
+  'pagamento',
   'nubank',
   'picpay',
   'santander',
@@ -115,5 +114,9 @@ export function shouldInterpret(text: string, addressed: boolean): boolean {
   const words = normalizeText(text)
     .replace(/[^a-z ]/g, ' ')
     .split(' ');
-  return words.some((word) => FINANCIAL_TERMS.includes(word));
+  return words.some((word, index) => {
+    if (!FINANCIAL_TERMS.includes(word)) return false;
+    // "me conta uma coisa": o verbo, nao a conta do banco.
+    return word !== 'conta' || !['me', 'te', 'nos', 'lhe'].includes(words[index - 1] ?? '');
+  });
 }

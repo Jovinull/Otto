@@ -329,7 +329,7 @@ export async function requestContributionVoid(
   reference: string,
 ): Promise<Effect> {
   const code = reference.replace(/^#/, '').toLowerCase();
-  if (!/^[0-9a-f]{4,36}$/.test(code)) return replyOnly('Código inválido.');
+  if (!/^[0-9a-f]{4,36}$/.test(code)) return replyOnly('Não encontrei esse código. Veja /ultimos.');
   const rows = await deps.db
     .select()
     .from(goalContributions)
@@ -341,7 +341,7 @@ export async function requestContributionVoid(
     )
     .orderBy(desc(goalContributions.createdAt));
   const matches = rows.filter((r) => shortId(r.id).startsWith(code.slice(0, 6)));
-  if (matches.length !== 1) return replyOnly('Aporte não encontrado.');
+  if (matches.length !== 1) return replyOnly('Não encontrei esse código. Veja /ultimos.');
   const pendingId = deps.newId();
   return {
     statements: [

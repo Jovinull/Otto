@@ -65,6 +65,10 @@ export async function reportBalance(
     };
   }
 
+  const overReserved =
+    position.allocatedCents > reported
+      ? ` Atenção: há ${formatBRL(position.allocatedCents)} reservados nessa conta, mais do que esse saldo; ajuste com /retirada.`
+      : '';
   const difference = reported - position.balanceCents;
   if (difference === 0) {
     return replyOnly(`${account.name} bate: ${formatBRL(reported)} aqui e no banco. ✅`);
@@ -110,7 +114,8 @@ export async function reportBalance(
         text: [
           `${account.name}: calculei ${formatBRL(position.balanceCents)} e você informou ${formatBRL(reported)}.`,
           `Diferença de ${formatBRL(Math.abs(difference))} ${direction}. Não sei a causa: pode ter faltado algum lançamento.`,
-          'Confirmar registra um ajuste no saldo, sem mexer nos lançamentos nem contar como gasto ou receita. Cancelar deixa como está para você lançar o que faltou.',
+          'Confirmar registra um ajuste no saldo, sem mexer nos lançamentos nem contar como gasto ou receita. Cancelar deixa como está para você lançar o que faltou.' +
+            overReserved,
         ].join('\n'),
         buttons: confirmationButtons(pendingId),
       },

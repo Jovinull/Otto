@@ -325,12 +325,15 @@ describe('consultas', () => {
     expect(h.messaging.last()).toContain('Saiu em despesas: R$ 40,00');
   });
 
-  it('relatorio individual separa compartilhado', async () => {
+  it('status do casal separa individual de compartilhado', async () => {
     await h.say('/gasto 100 mercado casal');
-    await h.say('/gasto 30 lanche', { from: JENNIFER_ID });
-    await h.say('/individual');
-    expect(h.messaging.last()).toContain('Felipe: individual R$ 0,00 · compartilhado R$ 100,00');
-    expect(h.messaging.last()).toContain('Jennifer: individual R$ 30,00');
+    await h.say('/gasto 40 lanche');
+    await h.say('/gasto 25 livro', { from: JENNIFER_ID });
+    await h.say('/statuscasal');
+    const text = h.messaging.last();
+    expect(text).toContain('gastos individuais R$ 40,00');
+    expect(text).toContain('gastos individuais R$ 25,00');
+    expect(text).toContain('Gastos compartilhados: R$ 100,00');
   });
 
   it('comparativo so usa categorias com base suficiente', async () => {
@@ -520,8 +523,8 @@ describe('meta do apartamento', () => {
   it('aporte pode ser desfeito com confirmacao', async () => {
     await h.say('/meta entrada=80000');
     await h.say('/aporte 500');
-    const match = /desfazer_aporte (\w+)/.exec(h.messaging.last());
-    await h.say(`/desfazer_aporte ${match![1]}`);
+    const match = /estornar (\w+)/.exec(h.messaging.last());
+    await h.say(`/estornar ${match![1]}`);
     await h.press(buttonData(h.messaging, 'c'));
     await h.say('/metas');
     expect(h.messaging.last()).toContain('Reservado: R$ 0,00');
@@ -598,7 +601,7 @@ describe('recorrencias e previsao', () => {
   });
 
   it('compromisso nao fica pago sozinho; pagamento relatado da baixa uma vez', async () => {
-    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/recorrente 1200 dia=5 aluguel');
     await h.say('/compromissos');
     expect(h.messaging.last()).toContain('aluguel: R$ 1.200,00');
     expect(await h.count('recurring_settlements')).toBe(0);
@@ -613,7 +616,7 @@ describe('recorrencias e previsao', () => {
   });
 
   it('estorno reabre a conta prevista', async () => {
-    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/recorrente 1200 dia=5 aluguel');
     await h.say('/gasto 1200 aluguel');
     const [row] = await txs();
     await h.say(`/estornar ${code(row!.id)}`);
@@ -779,7 +782,7 @@ describe('edicao de cadastros', () => {
   });
 
   it('edita e remove recorrencia sem apagar pagamentos', async () => {
-    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/recorrente 1200 dia=5 aluguel');
     await h.say('/editrecorrente aluguel valor=1300 dia=10');
     await h.say('/compromissos');
     expect(h.messaging.last()).toContain('aluguel: R$ 1.300,00 (10/11)');

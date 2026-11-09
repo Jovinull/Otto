@@ -23,6 +23,15 @@ import { auditStatement } from './shared';
 
 const NAME_NOISE = new Set(['meta', 'objetivo', 'do', 'da', 'de', 'para', 'pra', 'pro', 'o', 'a']);
 
+const MAX_GOAL_NAME = 60;
+
+/** So a meta da casa e especial; "Apartamento da praia" e uma meta comum. */
+export function isApartmentName(name: string): boolean {
+  return ['apartamento', 'entrada do apartamento', 'meta do apartamento'].includes(
+    normalizeText(name),
+  );
+}
+
 const meaningfulWords = (text: string): string[] =>
   normalizeText(text)
     .replace(/[^a-z0-9 ]/g, ' ')
@@ -82,6 +91,7 @@ export async function createGoal(deps: Deps, actor: Actor, input: GoalDefinition
   const name = input.name.replaceAll('_', ' ').trim();
   const normalizedName = normalizeText(name);
   if (!normalizedName) return replyOnly('Dê um nome para a meta.');
+  if (name.length > MAX_GOAL_NAME) return replyOnly('Nome muito longo. Use até 60 letras.');
   const target = money(input.targetText);
   const planned = money(input.plannedText);
   if (target === 'invalid' || planned === 'invalid') {
@@ -102,7 +112,7 @@ export async function createGoal(deps: Deps, actor: Actor, input: GoalDefinition
     return replyOnly(`Já existe a meta ${name}. Para mudar: /meta editar ${name} valor=VALOR`);
   }
 
-  const isApartment = normalizedName.includes('apartamento');
+  const isApartment = isApartmentName(name);
   const existingApartment = goals.find((g) => g.kind === 'apartment');
   if (isApartment && existingApartment) {
     return replyOnly(
@@ -585,7 +595,7 @@ export async function moveGoalFunds(
   if (input.direction === 'out') {
     lines.push('O dinheiro segue na conta, agora livre. Se saiu de lá, registre o gasto.');
   }
-  lines.push(`Desfazer: /desfazer_aporte ${shortId(contributionId)}`);
+  lines.push(`Desfazer: /estornar ${shortId(contributionId)}`);
   return { statements, replies: [{ text: lines.join('\n') }] };
 }
 
@@ -692,4 +702,15 @@ export async function linkGoalAccount(
     statements,
     replies: [{ text: [`Meta ${goal.name} agora fica em ${accountName}.`, ...notes].join('\n') }],
   };
+}
+
+/** Meta ligada a esta conta, quando so existe uma: transferir para o cofre e guardar para ela. */
+export async function linkedGoalOf(
+  deps: Deps,
+  actor: Actor,
+  accountId: string,
+): Promise<GoalView | null> {
+  const goals = await loadGoals(deps.db, actor.scope.household.id, actor.today);
+  const linked = goals.filter((g) => g.linkedAccountId === accountId);
+  return linked.length === 1 ? linked[0]! : null;
 }

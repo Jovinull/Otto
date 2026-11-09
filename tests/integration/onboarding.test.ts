@@ -41,6 +41,7 @@ describe('cadastro guiado', () => {
       '5º dia útil',
       '3100',
       'dia 10',
+      'pronto',
       'corrente Nubank 1.250,50',
       'reserva Caixinha 5000',
       'cartao Nubank Roxinho fecha 3 vence 10',
@@ -139,7 +140,7 @@ describe('cadastro guiado', () => {
     await answer('/configurar', 'neutro', '4200', 'dia 5', '3000', 'dia 10');
     await answer('/configurar renda');
     expect(h.messaging.last()).toContain('Vamos refazer essa parte');
-    await answer('5000', 'dia 5', '3000', 'dia 10', 'pronto');
+    await answer('5000', 'dia 5', '3000', 'dia 10', 'pronto', 'pronto');
     for (let i = 0; i < 6; i++) await answer('pular');
     await answer('pronto');
     for (let i = 0; i < 13; i++) await answer('pular');
@@ -180,7 +181,7 @@ describe('cadastro guiado', () => {
   });
 
   it('confirmacao com tudo preenchido cabe no limite de subrequisicoes', async () => {
-    await answer('/configurar', 'neutro', '4200', 'dia 5', '3000', 'dia 10');
+    await answer('/configurar', 'neutro', '4200', 'dia 5', '3000', 'dia 10', 'pronto');
     await answer(
       'corrente A 100',
       'corrente B 200',

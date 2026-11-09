@@ -49,6 +49,13 @@ interface DraftGoal {
   deadline: string | null;
 }
 
+interface DraftIncome extends Schedule {
+  name: string;
+  amountCents: number;
+  ownerText: string | null;
+  irregular: boolean;
+}
+
 type AlertChoice = 'todos' | 'contas' | 'resumos' | 'nenhum';
 
 interface DraftBill extends Schedule {
@@ -64,6 +71,7 @@ export interface OnboardingState {
   income: Record<string, { amountCents: number; accountName?: string } & Partial<Schedule>>;
   defaults: Record<string, { accountName?: string; cardName?: string }>;
   extraGoals: DraftGoal[];
+  extraIncome: DraftIncome[];
   alerts?: AlertChoice;
   accounts: DraftAccount[];
   bills: DraftBill[];
@@ -84,6 +92,7 @@ const emptyState = (): OnboardingState => ({
   income: {},
   defaults: {},
   extraGoals: [],
+  extraIncome: [],
   accounts: [],
   bills: [],
   budgets: {},
@@ -276,6 +285,32 @@ function parseExtraGoal(text: string, today: string): Parsed<DraftGoal> | { done
   return { value: { name: match[1]!.trim(), targetCents: parsed.cents, deadline } };
 }
 
+function parseExtraIncome(
+  text: string,
+  members: readonly Member[],
+): Parsed<DraftIncome> | { done: true } {
+  const value = clean(text);
+  if (DONE.has(value) || SKIP.has(value)) return { done: true };
+  const tokens = text.trim().split(/\s+/);
+  let ownerText: string | null = null;
+  const ownerIndex = tokens.findIndex((token, index) => {
+    if (normalizeText(token) !== 'de') return false;
+    const next = normalizeText(tokens[index + 1] ?? '');
+    return members.some((m) => normalizeText(m.name).split(' ')[0] === next);
+  });
+  if (ownerIndex >= 0) {
+    ownerText = tokens[ownerIndex + 1]!;
+    tokens.splice(ownerIndex, 2);
+  }
+  const irregularIndex = tokens.findIndex((t) => normalizeText(t) === 'irregular');
+  const irregular = irregularIndex >= 0;
+  if (irregular) tokens.splice(irregularIndex, 1);
+  const parsed = parseOtherBill(tokens.join(' '));
+  if (!parsed || !('value' in parsed) || parsed.value.amountCents === null) return null;
+  const { name, amountCents, scheduleType, scheduleValue } = parsed.value;
+  return { value: { name, amountCents, scheduleType, scheduleValue, ownerText, irregular } };
+}
+
 function parseDeadline(text: string, today: string): Parsed<string> {
   const value = clean(text);
   if (SKIP.has(value)) return { skip: true };
@@ -369,12 +404,37 @@ function findName(options: readonly string[], text: string): string | null {
   return options.find((name) => normalizeText(name) === wanted) ?? null;
 }
 
-const allAccountNames = (actor: Actor, state: OnboardingState): string[] => [
-  ...new Set([
-    ...actor.scope.accounts.filter((a) => a.kind !== 'credit_card').map((a) => a.name),
-    ...state.accounts.filter((a) => a.kind !== 'credit_card').map((a) => a.name),
-  ]),
-];
+interface LocationOption {
+  label: string;
+  name: string;
+  ownerId: string | null;
+}
+
+const accountKey = (ownerId: string | null, card: boolean, name: string): string =>
+  `${ownerId ?? 'casal'}|${card ? 'card' : 'cash'}|${normalizeText(name)}`;
+
+/** Contas onde o dinheiro da meta pode estar; nomes repetidos levam o dono no rotulo. */
+function locationOptions(actor: Actor, state: OnboardingState): LocationOption[] {
+  const all = [
+    ...actor.scope.accounts
+      .filter((a) => a.kind !== 'credit_card')
+      .map((a) => ({ name: a.name, ownerId: a.ownerMemberId })),
+    ...state.accounts
+      .filter((a) => a.kind !== 'credit_card')
+      .map((a) => ({ name: a.name, ownerId: draftOwner(actor, a) })),
+  ];
+  const unique = all.filter(
+    (a, index) =>
+      all.findIndex(
+        (b) => accountKey(b.ownerId, false, b.name) === accountKey(a.ownerId, false, a.name),
+      ) === index,
+  );
+  return unique.map((a) => {
+    const repeated = unique.filter((b) => normalizeText(b.name) === normalizeText(a.name)).length;
+    const owner = actor.scope.members.find((m) => m.id === a.ownerId)?.name ?? 'casal';
+    return { ...a, label: repeated > 1 ? `${a.name} ${owner}` : a.name };
+  });
+}
 
 function amountStep(
   id: string,
@@ -396,7 +456,10 @@ function amountStep(
 }
 
 function totalIncome(state: OnboardingState): number {
-  return Object.values(state.income).reduce((sum, i) => sum + i.amountCents, 0);
+  const main = Object.values(state.income).reduce((sum, i) => sum + i.amountCents, 0);
+  return (
+    main + state.extraIncome.filter((i) => !i.irregular).reduce((sum, i) => sum + i.amountCents, 0)
+  );
 }
 
 function totalBills(state: OnboardingState): number {
@@ -449,11 +512,25 @@ function buildSteps(actor: Actor): Step[] {
     );
   });
   steps.push({
+    id: 'renda_extra',
+    group: 'renda',
+    when: (state) => Object.keys(state.income).length > 0,
+    ask: () =>
+      `Mais alguma renda além do salário? Uma por mensagem: "Freelance 600 dia 10", "Bico 300 irregular" ou "Aluguel 900 dia 5 de ${members[1]?.name ?? 'Nome'}". Quando terminar, "pronto".`,
+    apply: (state, text) => {
+      const parsed = parseExtraIncome(text, members);
+      if (!parsed) return null;
+      if ('done' in parsed || !('value' in parsed)) return 'ok';
+      state.extraIncome.push(parsed.value);
+      return 'loop';
+    },
+  });
+  steps.push({
     id: 'contas',
     group: 'contas',
     ask: (state) =>
       state.accounts.length === 0
-        ? 'Etapa 3/6 — Contas e cartões de cada um. Mande uma por mensagem, assim:\n• corrente Nubank 1200 (saldo de hoje, opcional)\n• corrente Nubank 800 de Jennifer\n• conjunta Casa 1500 casal\n• reserva Caixinha 5000\n• cartao Nubank fecha 3 vence 10\nSó informe saldo que vocês conferiram. Quando terminar, "pronto".'
+        ? `Etapa 3/6 — Contas e cartões de cada um. Mande uma por mensagem, assim:\n• corrente Nubank 1200 (saldo de hoje, opcional)\n• corrente Nubank 800 de ${members[1]?.name ?? 'Nome'}\n• conjunta Casa 1500 casal\n• reserva Caixinha 5000\n• cartao Nubank fecha 3 vence 10\nSó informe saldo que vocês conferiram. Quando terminar, "pronto".`
         : `Anotei: ${state.accounts.map((a) => a.name).join(', ')}. Mais alguma? Ou "pronto".`,
     apply: (state, text) => {
       const parsed = parseAccount(text, members);
@@ -601,10 +678,17 @@ function buildSteps(actor: Actor): Step[] {
       group: 'apartamento',
       when: (state) => (state.goal.savedCents ?? 0) > 0,
       ask: (state) =>
-        `Em qual conta ou cofre está esse dinheiro? Opções: ${allAccountNames(actor, state).join(', ') || 'nenhuma cadastrada'}. Ou "não sei".`,
+        `Em qual conta ou cofre está esse dinheiro? Opções: ${
+          locationOptions(actor, state)
+            .map((o) => o.label)
+            .join(', ') || 'nenhuma cadastrada'
+        }. Ou "não sei".`,
       apply: (state, text) => {
         if (SKIP.has(clean(text))) return 'ok';
-        const name = findName(allAccountNames(actor, state), text);
+        const name = findName(
+          locationOptions(actor, state).map((o) => o.label),
+          text,
+        );
         if (!name) return null;
         state.goal.accountName = name;
         return 'ok';
@@ -717,6 +801,11 @@ function summary(state: OnboardingState, members: readonly Member[]): string {
   for (const [memberId, income] of Object.entries(state.income)) {
     lines.push(`• Renda prevista de ${name(memberId)}: ${formatBRL(income.amountCents)}/mês`);
   }
+  for (const extra of state.extraIncome) {
+    lines.push(
+      `• Renda: ${extra.name}${extra.ownerText ? ` de ${extra.ownerText}` : ''} ${formatBRL(extra.amountCents)}${extra.irregular ? ' (irregular, fora da previsão)' : '/mês'}`,
+    );
+  }
   for (const account of state.accounts) {
     const owner = account.ownerText ? ` de ${account.ownerText}` : '';
     const detail =
@@ -815,9 +904,12 @@ async function contradictions(deps: Deps, actor: Actor, state: OnboardingState):
   }
   const { accountName, savedCents } = state.goal;
   if (accountName && savedCents) {
+    const place = locationOptions(actor, state).find((o) => o.label === accountName);
     const opening =
-      actor.scope.accounts.find((a) => a.name === accountName)?.openingBalanceCents ??
-      state.accounts.find((a) => a.name === accountName)?.openingCents ??
+      actor.scope.accounts.find((a) => a.name === place?.name && a.ownerMemberId === place.ownerId)
+        ?.openingBalanceCents ??
+      state.accounts.find((a) => a.name === place?.name && draftOwner(actor, a) === place.ownerId)
+        ?.openingCents ??
       null;
     if (opening !== null && opening < savedCents) {
       notes.push(
@@ -908,7 +1000,10 @@ export async function onboardingCommand(
       state.extraGoals = [];
     }
     if (option === 'alertas') delete state.alerts;
-    if (option === 'renda') state.income = {};
+    if (option === 'renda') {
+      state.income = {};
+      state.extraIncome = [];
+    }
     return ask(deps, actor, state, 'Vamos refazer essa parte.\n');
   }
   return ask(
@@ -1004,7 +1099,12 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
   }
 
   // O mesmo nome pode existir para pessoas diferentes: a identidade inclui o dono.
-  const idByName = new Map(actor.scope.accounts.map((a) => [a.name, a.id]));
+  const idByKey = new Map(
+    actor.scope.accounts.map((a) => [
+      accountKey(a.ownerMemberId, a.kind === 'credit_card', a.name),
+      a.id,
+    ]),
+  );
   const existingIdentity = new Set(actor.scope.accounts.map((a) => a.identityKey));
   const skipped: string[] = [];
   const hasDefault = (memberId: string, card: boolean) => {
@@ -1034,7 +1134,7 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
         ? normalizeText(chosen) === normalizeText(account.name)
         : !hasDefault(ownerId, card) && eligibleNames(actor, state, ownerId, card).length === 1);
     const id = deps.newId();
-    idByName.set(account.name, id);
+    idByKey.set(accountKey(ownerId, card, account.name), id);
     collect(
       await addAccount(deps, actor, {
         id,
@@ -1055,7 +1155,9 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
       [chosen.accountName, 'defaultAccountId'],
       [chosen.cardName, 'defaultCardId'],
     ] as const) {
-      const account = name ? actor.scope.accounts.find((a) => a.name === name) : undefined;
+      const account = name
+        ? actor.scope.accounts.find((a) => a.name === name && a.ownerMemberId === memberId)
+        : undefined;
       if (account) statements.push(setMemberDefaultStatement(deps, memberId, key, account.id));
     }
   }
@@ -1073,7 +1175,9 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
         scheduleValue: income.scheduleValue ?? null,
         personText: member.name,
         categoryText: 'salario',
-        accountId: accountName ? (idByName.get(accountName) ?? null) : null,
+        accountId: accountName
+          ? (idByKey.get(accountKey(memberId, false, accountName)) ?? null)
+          : null,
       }),
       `renda de ${member.name}`,
     );
@@ -1099,7 +1203,23 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
       `limite de ${slug}`,
     );
   }
+  for (const extra of state.extraIncome) {
+    collect(
+      await addCommitment(deps, actor, {
+        kind: 'income',
+        description: extra.name,
+        amountText: formatBRL(extra.amountCents).replace('R$ ', ''),
+        scheduleType: extra.irregular ? 'monthly_unspecified' : extra.scheduleType,
+        scheduleValue: extra.irregular ? null : extra.scheduleValue,
+        personText: extra.ownerText ?? actor.member.name,
+        categoryText: null,
+        frequency: extra.irregular ? 'irregular' : 'monthly',
+      }),
+      `renda ${extra.name}`,
+    );
+  }
   const goal = state.goal;
+  const goalPlace = locationOptions(actor, state).find((o) => o.label === goal.accountName);
   if (Object.keys(goal).length > 0) {
     collect(
       await updateApartmentGoal(deps, actor, {
@@ -1109,7 +1229,9 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
         plannedMonthly: money(goal.monthlyCents),
         emergencyReserve: money(goal.reserveCents),
         initialConfirmed: goal.savedCents ? money(goal.savedCents) : null,
-        linkedAccountId: goal.accountName ? (idByName.get(goal.accountName) ?? null) : null,
+        linkedAccountId: goalPlace
+          ? (idByKey.get(accountKey(goalPlace.ownerId, false, goalPlace.name)) ?? null)
+          : null,
       }),
       'meta',
     );

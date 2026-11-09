@@ -7,6 +7,7 @@ import type { LocalDate } from '../../shared/dates';
 import { formatShortDate, monthName, monthRange, periodOf } from '../../shared/dates';
 import { formatBRL } from '../../shared/money';
 import type { Account, Actor, Deps, Member, Scope } from '../context';
+import { findMember } from '../commands/planning';
 import type { CardStatement } from './cards';
 import { cardStatement } from './cards';
 import type { AccountBalance, CommitmentView, GoalView } from './finance';
@@ -178,11 +179,7 @@ function pendingBills(items: readonly CommitmentView[]): number {
 
 export function resolveMember(actor: Actor, text: string | null): Member | string {
   if (!text) return actor.member;
-  const wanted = text.trim().toLowerCase();
-  return (
-    actor.scope.members.find((m) => m.name.toLowerCase() === wanted) ??
-    `Não encontrei "${text}" no cadastro.`
-  );
+  return findMember(actor, text) ?? `Não encontrei "${text}" no cadastro.`;
 }
 
 export async function personalStatus(deps: Deps, actor: Actor, member: Member): Promise<string> {
@@ -211,6 +208,8 @@ export async function personalStatus(deps: Deps, actor: Actor, member: Member): 
     ),
   );
   const bills = pendingBills(data.commitments.filter((c) => c.memberId === member.id));
+  const coupleBills = pendingBills(data.commitments.filter((c) => c.memberId === null));
+  const ownerless = data.positions.filter((p) => p.ownership === 'unassigned');
   const goals = data.goals.filter((g) => g.ownerMemberId === member.id || g.ownerMemberId === null);
   const cardsDue = cardLines.reduce((total, c) => total + c.openCents, 0);
 
@@ -225,8 +224,17 @@ export async function personalStatus(deps: Deps, actor: Actor, member: Member): 
     lines.push(...summarizeCash(shared).lines);
   }
   if (cardLines.length > 0) lines.push('', '💳 Cartões', ...cardLines.map((c) => c.line));
-  if (bills > 0) lines.push('', `📌 Contas a pagar no mês: ${formatBRL(bills)}`);
+  if (bills > 0 || coupleBills > 0) {
+    lines.push('', `📌 Contas a pagar no mês: ${formatBRL(bills)}`);
+    if (coupleBills > 0) lines.push(`Do casal, fora da conta abaixo: ${formatBRL(coupleBills)}`);
+  }
   if (goals.length > 0) lines.push('', '🎯 Metas', ...goals.map(goalLine));
+  if (ownerless.length > 0) {
+    lines.push(
+      '',
+      `Sem dono definido: ${ownerless.map((p) => p.name).join(', ')}. Ajuste com /editconta Nome dono=Pessoa.`,
+    );
+  }
   if (own.length > 0) {
     lines.push(
       '',
@@ -248,7 +256,7 @@ export async function coupleStatus(deps: Deps, actor: Actor): Promise<string> {
   const memberName = (id: string | null) => scope.members.find((m) => m.id === id)?.name;
   const cash = summarizeCash(
     data.positions.filter((p) => p.kind !== 'credit_card'),
-    (p) => ` (${memberName(p.ownerMemberId) ?? 'casal'})`,
+    (p) => ` (${memberName(p.ownerMemberId) ?? (p.ownership === 'shared' ? 'casal' : 'sem dono')})`,
   );
   const cardLines = cards.map((card) =>
     summarizeCard(
@@ -289,89 +297,49 @@ export async function coupleStatus(deps: Deps, actor: Actor): Promise<string> {
   return lines.join('\n');
 }
 
-/** Contas e cartoes da pessoa, com os padroes marcados. */
+/** Contas e cartoes da pessoa, com saldos, reservas e os padroes marcados. */
 export async function myAccountsReport(deps: Deps, actor: Actor, member: Member): Promise<string> {
-  const positions = await accountBalances(deps.db, actor.scope);
-  const preferences = parseMemberPreferences(member.preferences);
-  const own = positions.filter((p) => p.ownerMemberId === member.id || p.ownership === 'shared');
-  if (own.length === 0) {
-    return `${member.name} ainda não tem contas. Use /addconta corrente Nome saldo=1000.`;
-  }
-  const lines = own.map((p) => {
-    const isDefault = p.id === preferences.defaultAccountId || p.id === preferences.defaultCardId;
-    const suffix = p.ownership === 'shared' ? ' (casal)' : '';
-    return `${p.kind === 'credit_card' ? '💳' : '🏦'} ${p.name}${suffix}${isDefault ? ' ⭐ padrão' : ''}`;
-  });
-  return [`Contas de ${member.name}:`, ...lines].join('\n');
-}
-
-export async function myBalancesReport(deps: Deps, actor: Actor, member: Member): Promise<string> {
-  const positions = await accountBalances(deps.db, actor.scope);
-  const own = positions.filter((p) => p.kind !== 'credit_card' && p.ownerMemberId === member.id);
-  if (own.length === 0) return `${member.name} ainda não tem contas próprias.`;
-  const cash = summarizeCash(own);
-  const lines = [`Saldos de ${member.name}:`, ...cash.lines];
-  if (cash.unknown.length === 0) lines.push(`Total: ${formatBRL(cash.knownCents)}`);
-  else lines.push(`Total conhecido: ${formatBRL(cash.knownCents)} (faltam saldos)`);
-  return lines.join('\n');
-}
-
-export async function myCardsReport(deps: Deps, actor: Actor, member: Member): Promise<string> {
   const { scope, today } = actor;
   const cards = scope.accounts.filter(
     (a) => a.kind === 'credit_card' && a.ownerMemberId === member.id,
   );
-  if (cards.length === 0) return `${member.name} ainda não tem cartões.`;
-  const preferences = parseMemberPreferences(member.preferences);
   const [positions, ...statements] = await Promise.all([
     accountBalances(deps.db, scope),
     ...cards.map((card) => cardStatement(deps.db, scope, card, today)),
   ]);
-  const lines = cards.map((card, index) => {
-    const statement = statements[index] as CardStatement | null;
-    return summarizeCard(
-      card,
-      positions.find((p) => p.id === card.id),
-      statement ?? undefined,
-      today,
-      preferences.defaultCardId === card.id,
-    ).line;
-  });
-  return [`Cartões de ${member.name}:`, ...lines].join('\n');
-}
-
-export async function myGoalsReport(deps: Deps, actor: Actor, member: Member): Promise<string> {
-  const goals = (await loadGoals(deps.db, actor.scope.household.id, actor.today)).filter(
-    (g) => g.ownerMemberId === member.id || g.ownerMemberId === null,
-  );
-  if (goals.length === 0) return 'Nenhuma meta ainda. Crie com /meta criar NOME valor=VALOR.';
-  return [`Metas de ${member.name} e do casal:`, ...goals.map(goalLine)].join('\n');
-}
-
-export async function incomeSourcesReport(deps: Deps, actor: Actor): Promise<string> {
-  const { scope, today } = actor;
-  const commitments = (await loadCommitments(deps.db, scope.household.id, periodOf(today))).filter(
-    (c) => c.kind === 'income',
-  );
-  if (commitments.length === 0) {
-    return 'Nenhuma renda cadastrada. Exemplo: /renda 4000 dia=5 @Nubank';
+  const preferences = parseMemberPreferences(member.preferences);
+  const own = positions.filter((p) => p.kind !== 'credit_card' && p.ownerMemberId === member.id);
+  const shared = positions.filter((p) => p.kind !== 'credit_card' && p.ownership === 'shared');
+  if (own.length + shared.length + cards.length === 0) {
+    return `${member.name} ainda não tem contas. Use /addconta corrente Nome saldo=1000.`;
   }
-  const lines = ['Rendas cadastradas (previsão, não é dinheiro em conta):'];
-  for (const income of commitments) {
-    const who = scope.members.find((m) => m.id === income.memberId)?.name ?? 'Casal';
-    const account = scope.accounts.find((a) => a.id === income.accountId)?.name;
-    const value = income.amountCents === null ? 'valor variável' : formatBRL(income.amountCents);
-    const when =
-      income.frequency === 'irregular'
-        ? 'sem data fixa'
-        : income.expected.date
-          ? `previsto ${formatShortDate(income.expected.date)}`
-          : 'sem dia definido';
+  const lines = [`Contas de ${member.name}:`];
+  if (own.length > 0) {
+    const cash = summarizeCash(own, (p) => (p.id === preferences.defaultAccountId ? ' ⭐' : ''));
+    lines.push(...cash.lines);
     lines.push(
-      `• ${income.description} (${who}): ${value} · ${when}${account ? ` · ${account}` : ''} · ${income.settled ? '✅ recebido' : '⏳ a receber'}`,
+      cash.unknown.length === 0
+        ? `Total: ${formatBRL(cash.knownCents)}`
+        : `Total conhecido: ${formatBRL(cash.knownCents)} (faltam saldos)`,
     );
   }
-  lines.push('Quando cair: /recebi NOME [VALOR].');
+  if (shared.length > 0) lines.push('', 'Do casal:', ...summarizeCash(shared).lines);
+  if (cards.length > 0) {
+    lines.push('', 'Cartões:');
+    cards.forEach((card, index) => {
+      const statement = statements[index] as CardStatement | null;
+      lines.push(
+        summarizeCard(
+          card,
+          positions.find((p) => p.id === card.id),
+          statement ?? undefined,
+          today,
+          preferences.defaultCardId === card.id,
+        ).line,
+      );
+    });
+  }
+  lines.push('', '⭐ = padrão. Trocar: /contapadrao Nome ou /cartaopadrao Nome.');
   return lines.join('\n');
 }
 

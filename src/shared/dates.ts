@@ -175,7 +175,9 @@ export function resolveDateExpression(expression: string, today: LocalDate): Dat
   const past = (date: LocalDate): DateResolution =>
     date > today ? { status: 'invalid' } : { status: 'ok', date };
 
-  if (text === '' || text === 'hoje' || text === 'agora') return { status: 'ok', date: today };
+  if (['', 'hoje', 'agora', 'este mes', 'esse mes', 'neste mes', 'nesse mes'].includes(text)) {
+    return { status: 'ok', date: today };
+  }
   if (text === 'ontem') return { status: 'ok', date: addDays(today, -1) };
   if (text === 'anteontem' || text === 'antes de ontem')
     return { status: 'ok', date: addDays(today, -2) };

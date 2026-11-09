@@ -54,9 +54,9 @@ export async function consultPurchase(
     commitmentLoad(deps, scope, period),
     loadGoals(deps.db, scope.household.id, today),
   ]);
-  const goal = goals.find((g) => g.kind === 'apartment');
-  const plannedRemaining = Math.max(
-    (goal?.progress.plannedMonthlyCents ?? 0) - (goal?.progress.confirmedThisMonthCents ?? 0),
+  const plannedRemaining = goals.reduce(
+    (sum, g) =>
+      sum + Math.max((g.progress.plannedMonthlyCents ?? 0) - g.progress.confirmedThisMonthCents, 0),
     0,
   );
   const margin = estimateMargin({
@@ -191,7 +191,17 @@ export async function buildAnalysisFacts(
     };
   }
 
+  const otherGoals = goals
+    .filter((g) => g.kind !== 'apartment')
+    .map((g) => ({
+      nome: g.name,
+      reservado: money(g.progress.confirmedCents),
+      alvo: g.progress.targetCents === null ? null : money(g.progress.targetCents),
+      realizado_no_mes: money(g.progress.confirmedThisMonthCents),
+    }));
+
   const facts: Record<string, unknown> = {
+    outras_metas: otherGoals,
     periodo: period,
     entradas: money(flow.incomeCents),
     despesas: money(flow.expenseCents),

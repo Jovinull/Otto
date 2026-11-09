@@ -28,7 +28,7 @@ describe('previsto versus realizado', () => {
   });
 
   it('pagamento parcial de conta fixa nao quita a conta', async () => {
-    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/recorrente 1200 dia=5 aluguel');
     await h.say('/gasto 600 aluguel');
     expect(await h.count('recurring_settlements')).toBe(0);
     await h.say('/compromissos');
@@ -36,7 +36,7 @@ describe('previsto versus realizado', () => {
   });
 
   it('conta de valor variavel e quitada pelo primeiro pagamento', async () => {
-    await h.say('/recorrente despesa ? dia=10 energia');
+    await h.say('/recorrente ? dia=10 energia');
     await h.say('/gasto 187,40 energia');
     expect(await h.count('recurring_settlements')).toBe(1);
   });
@@ -66,7 +66,7 @@ describe('saldos sem dinheiro disponivel enganoso', () => {
   it('transferencia para a reserva lembra que nao e aporte', async () => {
     await h.say('/meta entrada=80000');
     await h.say('/transferir 300 Principal para Reserva');
-    expect(h.messaging.last()).toContain('/aporte 300,00');
+    expect(h.messaging.last()).toContain('/aporte META 300,00 @Reserva existente');
     expect(await h.count('goal_contributions')).toBe(0);
   });
 

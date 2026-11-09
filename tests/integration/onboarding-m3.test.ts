@@ -47,6 +47,8 @@ beforeEach(async () => {
 describe('cadastro guiado com contas por pessoa', () => {
   it('registra dono, padroes, renda na conta certa, cofre e metas', async () => {
     await answer('/configurar', 'neutro', '4000', 'dia 5', '2500', 'dia 10');
+    expect(h.messaging.last()).toContain('Mais alguma renda');
+    await answer('Freelance 600 dia 15', 'Bico 300 irregular de Jennifer', 'pronto');
     await answer(
       'corrente MercadoPago 2000',
       'corrente Caixa 100',
@@ -91,7 +93,9 @@ describe('cadastro guiado com contas por pessoa', () => {
     expect((await preferences('Jennifer')).defaultCardId).toBe(
       await accountId('PicPay', 'Jennifer'),
     );
-    await answer('/rendas');
+    await answer('/compromissos');
+    expect(h.messaging.last()).toContain('Renda prevista em novembro/2026: R$ 7.100,00');
+    expect(h.messaging.last()).toContain('Bico (Jennifer): R$ 300,00');
     expect(h.messaging.last()).toContain('Salário (Felipe): R$ 4.000,00');
     expect(h.messaging.last()).toContain('MercadoPago');
     expect(h.messaging.last()).toContain('Salário (Jennifer): R$ 2.500,00');
@@ -109,7 +113,7 @@ describe('cadastro guiado com contas por pessoa', () => {
 
   it('nao recria o que existe e avisa antes de confirmar', async () => {
     await answer('/addconta corrente Nubank saldo=900', '/renda 3000 dia=5');
-    await answer('/configurar', 'neutro', '4000', 'dia 5', 'pular');
+    await answer('/configurar', 'neutro', '4000', 'dia 5', 'pular', 'pronto');
     await answer('corrente Nubank 100', 'pronto');
     await skip(6);
     await skip(5);

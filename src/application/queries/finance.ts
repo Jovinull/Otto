@@ -425,6 +425,8 @@ export interface GoalView {
   notes: string | null;
   progress: GoalProgress;
   locations: GoalLocation[];
+  /** Quanto cada pessoa colocou na meta. */
+  contributors: { memberId: string; cents: number }[];
 }
 
 const UNKNOWN_LOCATION = 'local não informado';
@@ -444,6 +446,7 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
         kind: goalContributions.kind,
         accountId: goalContributions.accountId,
         accountName: financialAccounts.name,
+        memberId: goalContributions.memberId,
       })
       .from(goalContributions)
       .leftJoin(financialAccounts, eq(goalContributions.accountId, financialAccounts.id))
@@ -459,6 +462,7 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
     let confirmedCents = 0;
     let confirmedThisMonthCents = 0;
     const byLocation = new Map<string | null, GoalLocation>();
+    const byMember = new Map<string, number>();
     for (const entry of contributions) {
       if (entry.goalId !== goal.id) continue;
       const signed = entry.direction === 'in' ? entry.amountCents : -entry.amountCents;
@@ -469,6 +473,7 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
         cents: 0,
       };
       location.cents += signed;
+      byMember.set(entry.memberId, (byMember.get(entry.memberId) ?? 0) + signed);
       byLocation.set(entry.accountId, location);
       // Saldo inicial e dinheiro ja existente: nao sao aporte feito no mes.
       if (entry.kind === 'contribution' && periodOf(entry.contributionDate) === currentPeriod) {
@@ -485,6 +490,7 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
       deadline: goal.deadline,
       notes: goal.notes,
       locations: [...byLocation.values()].filter((l) => l.cents !== 0),
+      contributors: [...byMember].map(([memberId, cents]) => ({ memberId, cents })),
       progress: computeGoalProgress(
         {
           targetCents: goal.targetCents,

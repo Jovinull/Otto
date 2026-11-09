@@ -76,10 +76,10 @@ describe('contas e cartoes do casal', () => {
   });
 
   it('2. varios cartoes por pessoa', async () => {
-    const cards = await say('/meuscartoes');
+    const cards = await say('/minhascontas');
     expect(cards).toContain('Mercado Pago ⭐');
     expect(cards).toContain('Santander');
-    expect(await jennifer('/meuscartoes')).toContain('PicPay ⭐');
+    expect(await jennifer('/minhascontas')).toContain('PicPay ⭐');
   });
 
   it('3. conta padrao de cada pessoa', async () => {
@@ -106,7 +106,7 @@ describe('contas e cartoes do casal', () => {
     await say('/gasto 90 tenis cartao @Santander');
     expect(await count('financial_transactions')).toBe(1);
     expect(await count('installment_plans')).toBe(0);
-    expect(await say('/faturas Santander')).toContain('R$ 90,00');
+    expect(await say('/fatura Santander')).toContain('R$ 90,00');
   });
 
   it('7. parcelamento com divisao exata em centavos', async () => {
@@ -136,9 +136,9 @@ describe('contas e cartoes do casal', () => {
   });
 
   it('11. transferencia entre bancos preserva o total', async () => {
-    const before = await say('/meusaldos');
+    const before = await say('/minhascontas');
     await say('/transferir 300 Nubank para Caixa');
-    const after = await say('/meusaldos');
+    const after = await say('/minhascontas');
     expect(before).toContain('Total: R$ 5.300,00');
     expect(after).toContain('Total: R$ 5.300,00');
     expect(after).toContain('Caixa: R$ 800,00');
@@ -155,7 +155,7 @@ describe('metas e reservas do casal', () => {
 
   it('13. associar dinheiro existente a meta nao move saldo', async () => {
     await say('/meta editar Viagem aporte=100');
-    await say('/alocar Viagem 1000 @Mercado_Pago');
+    await say('/aporte Viagem 1000 @Mercado_Pago existente');
     const text = await say('/contas');
     expect(text).toContain('Mercado Pago (Felipe): R$ 4.000,00 · reservado R$ 1.000,00');
     expect(await say('/meta Viagem')).toContain('Realizado neste mês: R$ 0,00');
@@ -168,14 +168,14 @@ describe('metas e reservas do casal', () => {
   });
 
   it('15. retirada da meta', async () => {
-    await say('/alocar Viagem 500 @Mercado_Pago');
+    await say('/aporte Viagem 500 @Mercado_Pago existente');
     await say('/retirada Viagem 200 @Mercado_Pago');
     expect(await say('/meta Viagem')).toContain('Reservado: R$ 300,00');
   });
 
   it('16. reserva dividida entre contas', async () => {
-    await say('/alocar Apartamento 400 @Mercado_Pago');
-    await say('/alocar Apartamento 300 @Nubank');
+    await say('/aporte Apartamento 400 @Mercado_Pago existente');
+    await say('/aporte Apartamento 300 @Nubank existente');
     const text = await say('/meta Apartamento');
     expect(text).toContain('Mercado Pago R$ 400,00');
     expect(text).toContain('Nubank R$ 300,00');
@@ -183,11 +183,12 @@ describe('metas e reservas do casal', () => {
   });
 
   it('17. varias metas na mesma conta sem duplicar', async () => {
-    await say('/alocar Apartamento 300 @Caixa');
-    await say('/alocar Viagem 200 @Caixa');
-    expect(await say('/alocar Reserva de emergencia 100 @Caixa')).toContain('não dá para reservar');
-    const text = await say('/livre Caixa');
-    expect(text).toContain('Livre de metas: R$ 0,00');
+    await say('/aporte Apartamento 300 @Caixa existente');
+    await say('/aporte Viagem 200 @Caixa existente');
+    expect(await say('/aporte Reserva de emergencia 100 @Caixa existente')).toContain(
+      'não dá para reservar',
+    );
+    expect(await say('/contas')).toContain('reservado R$ 500,00 · livre R$ 0,00');
     expect(await count('goal_contributions')).toBe(2);
   });
 });
@@ -212,7 +213,7 @@ describe('renda, status e saldos', () => {
   it('20. renda extraordinaria nao quita o salario', async () => {
     await say('/receita 900 bonus');
     expect(await count('recurring_settlements')).toBe(0);
-    expect(await say('/rendas')).toContain('⏳ a receber');
+    expect(await say('/compromissos')).toContain('⏳ a receber');
   });
 
   it('21. status pessoal', async () => {
@@ -270,8 +271,8 @@ describe('alertas e confiabilidade', () => {
 
   it('28. reprocessar a mesma mensagem nao duplica', async () => {
     const options = { updateId: 880001, messageId: 880001 };
-    await h.say('/alocar Viagem 100 @Caixa', options);
-    await h.say('/alocar Viagem 100 @Caixa', options);
+    await h.say('/aporte Viagem 100 @Caixa existente', options);
+    await h.say('/aporte Viagem 100 @Caixa existente', options);
     expect(await count('goal_contributions')).toBe(1);
   });
 

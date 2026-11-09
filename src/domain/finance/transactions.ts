@@ -203,6 +203,12 @@ export function matchAccount(
       );
     }
     if (candidates.length === 0) {
+      // "MercadoPago" e "Mercado Pago" sao a mesma conta.
+      const compact = tokens.join('');
+      candidates = pool.filter((a) => a.normalizedName.replaceAll(' ', '') === compact);
+    }
+    // Palavra generica sozinha aponta o tipo; com outras palavras, e o nome de outra conta.
+    if (candidates.length === 0 && tokens.length === 1) {
       if (tokens.some((t) => ['reserva', 'poupanca', 'cofre', 'cofrinho'].includes(t))) {
         candidates = pool.filter((a) => a.kind === 'reserve' || a.kind === 'savings');
       } else if (tokens.includes('dinheiro') || tokens.includes('especie')) {
@@ -393,6 +399,24 @@ function missingAccountQuestion(
   return `${prefix} Opções: ${accounts.map((a) => accountLabel(a, context)).join(', ')}.`;
 }
 
+/** "minha conta principal" e o padrao da pessoa, a menos que exista conta com esse nome. */
+function expandPrincipal(
+  draft: TransactionDraft,
+  member: LedgerMember,
+  context: LedgerContext,
+): TransactionDraft {
+  const preferred = context.accounts.find((a) => a.id === member.defaultAccountId);
+  if (!preferred) return draft;
+  const named = context.accounts.some((a) => a.normalizedName === 'principal');
+  const expand = (hint: string | null) =>
+    !named && hint && coreWords(hint).join(' ') === 'principal' ? preferred.name : hint;
+  return {
+    ...draft,
+    sourceAccountText: expand(draft.sourceAccountText),
+    destinationAccountText: expand(draft.destinationAccountText),
+  };
+}
+
 /** Contas que fazem sentido oferecer: as da pessoa e do casal; se nao houver, todas. */
 function eligibleFor(
   member: LedgerMember,
@@ -414,7 +438,7 @@ function resolveExpenseSource(
 ): { choice: SourceChoice } | { outcome: ResolveOutcome } {
   const wantsCredit =
     draft.paymentMethod === 'credit' ||
-    (draft.installments ?? 1) > 1 ||
+    draft.installments !== null ||
     hintSignalsCard(draft.sourceAccountText);
 
   if (draft.sourceAccountId) {
@@ -643,7 +667,11 @@ export function resolveDraft(draft: TransactionDraft, context: LedgerContext): R
   };
 
   if (draft.kind === 'transfer' || draft.kind === 'card_payment') {
-    const accounts = resolveTransferAccounts(draft, member, context);
+    const accounts = resolveTransferAccounts(
+      expandPrincipal(draft, member, context),
+      member,
+      context,
+    );
     if ('outcome' in accounts) return accounts.outcome;
     const isCardPayment = accounts.destination.kind === 'credit_card';
     if (draft.kind === 'card_payment' && !isCardPayment) {
@@ -722,7 +750,7 @@ export function resolveDraft(draft: TransactionDraft, context: LedgerContext): R
     };
   }
 
-  const source = resolveExpenseSource(draft, member, context);
+  const source = resolveExpenseSource(expandPrincipal(draft, member, context), member, context);
   if ('outcome' in source) return source.outcome;
   const installments =
     draft.installments !== null && draft.installments > 1 ? draft.installments : null;
@@ -782,7 +810,7 @@ export function applySlotAnswer(
       const wantsCard =
         slot === 'destination_account'
           ? isPayment
-          : draft.paymentMethod === 'credit' || (draft.installments ?? 1) > 1;
+          : draft.paymentMethod === 'credit' || draft.installments !== null;
       const match = matchAccount(text, context.accounts, {
         memberId: 'member' in payer ? payer.member.id : context.senderMemberId,
         only: wantsCard

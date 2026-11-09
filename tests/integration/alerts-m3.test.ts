@@ -34,7 +34,7 @@ beforeEach(async () => {
 describe('acompanhamento de metas', () => {
   it('avisa o que falta no mes uma unica vez', async () => {
     await at('2026-11-02', '/meta criar Viagem valor=8000 aporte=500');
-    await at('2026-11-03', '/alocar Viagem 100 @Principal');
+    await at('2026-11-03', '/aporte Viagem 100 @Principal existente');
     const first = await hourly('2026-11-21');
     const text = first.find((t) => t.includes('metas do mês'))!;
     expect(text).toContain('Viagem: R$ 0,00 de R$ 500,00 neste mês; faltam R$ 500,00');

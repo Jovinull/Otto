@@ -946,7 +946,7 @@
       "setup": [
         "/addconta corrente Nubank saldo=1000",
         "/meta criar Viagem valor=8000",
-        "/alocar Viagem 500 @Nubank"
+        "/aporte Viagem 500 @Nubank existente"
       ],
       "golden": {
         "intent": "withdraw_goal",

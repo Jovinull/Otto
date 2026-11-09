@@ -198,7 +198,7 @@ export async function budgetsReport(
   return lines.join('\n');
 }
 
-function goalLines(goal: GoalView): string[] {
+function goalLines(goal: GoalView, scope: Scope): string[] {
   const { progress } = goal;
   const icon = goal.kind === 'apartment' ? '🏠' : '🎯';
   const lines = [`Meta: ${goal.name} ${icon}`];
@@ -235,6 +235,12 @@ function goalLines(goal: GoalView): string[] {
       `Onde está: ${goal.locations.map((l) => `${l.accountName} ${formatBRL(l.cents)}`).join(' · ')}`,
     );
   }
+  const givers = goal.contributors.filter((c) => c.cents > 0);
+  if (givers.length > 1) {
+    lines.push(
+      `Quem guardou: ${givers.map((c) => `${memberName(scope, c.memberId)} ${formatBRL(c.cents)}`).join(' · ')}`,
+    );
+  }
   if (goal.emergencyReserveCents !== null) {
     lines.push(
       `Reserva de emergência (separada da meta): ${formatBRL(goal.emergencyReserveCents)}`,
@@ -250,7 +256,7 @@ export async function goalReport(deps: Deps, scope: Scope, today: LocalDate): Pr
   if (goals.length === 0) {
     return 'Nenhuma meta ainda. Comece com: /meta criar Viagem valor=8000 ou /meta entrada=VALOR para o apartamento.';
   }
-  return goals.map((goal) => goalLines(goal).join('\n')).join('\n\n');
+  return goals.map((goal) => goalLines(goal, scope).join('\n')).join('\n\n');
 }
 
 export async function singleGoalReport(
@@ -261,7 +267,7 @@ export async function singleGoalReport(
 ): Promise<string> {
   const goals = await loadGoals(deps.db, scope.household.id, today);
   const found = findGoal(goals, name);
-  return 'error' in found ? found.error : goalLines(found.goal).join('\n');
+  return 'error' in found ? found.error : goalLines(found.goal, scope).join('\n');
 }
 
 export async function billsReport(deps: Deps, scope: Scope, period: Period): Promise<string> {
@@ -302,21 +308,31 @@ export async function incomeForecastReport(
     loadCommitments(deps.db, scope.household.id, period),
     cashFlow(deps.db, scope.household.id, monthRange(period)),
   ]);
-  const incomes = commitments.filter((c) => c.kind === 'income' && c.frequency === 'monthly');
-  if (incomes.length === 0) {
+  const sources = commitments.filter((c) => c.kind === 'income');
+  const incomes = sources.filter((c) => c.frequency === 'monthly');
+  if (sources.length === 0) {
     return `Não tenho renda prevista cadastrada para ${monthName(period)}. Use /renda 4200 util=5, por exemplo. Recebido confirmado no mês: ${formatBRL(flow.incomeCents)}.`;
   }
   const expected = incomes.reduce((sum, i) => sum + (i.amountCents ?? 0), 0);
   const lines = [
     `Renda prevista em ${monthName(period)}: ${formatBRL(expected)} (previsão, não é dinheiro em conta)`,
   ];
-  for (const income of incomes) {
+  for (const income of sources) {
     const who = income.memberId ? ` (${memberName(scope, income.memberId)})` : '';
+    const account = scope.accounts.find((a) => a.id === income.accountId)?.name;
+    const value = income.amountCents === null ? 'valor variável' : formatBRL(income.amountCents);
+    const state =
+      income.frequency === 'irregular'
+        ? 'sem data fixa, fora da previsão'
+        : income.settled
+          ? '✅ recebido'
+          : '⏳ a receber';
     lines.push(
-      `• ${income.description}${who}: ${income.amountCents === null ? 'valor variável' : formatBRL(income.amountCents)} ${income.settled ? '✅ recebido' : '⏳ a receber'}`,
+      `• ${income.description}${who}: ${value}${account ? ` · ${account}` : ''} · ${state}`,
     );
   }
   lines.push(`Recebido confirmado no mês: ${formatBRL(flow.incomeCents)}`);
+  lines.push('Quando cair: /recebi NOME [VALOR].');
   return lines.join('\n');
 }
 
@@ -476,26 +492,6 @@ export async function comparisonReport(
     lines.push(
       `• ${item.name}: ${formatBRL(item.previousCents)} → ${formatBRL(item.currentCents)} (${sign}${item.changePercent}%)`,
     );
-  }
-  return lines.join('\n');
-}
-
-export async function peopleReport(deps: Deps, scope: Scope, period: Period): Promise<string> {
-  const rows = await expensesByPerson(deps.db, scope.household.id, monthRange(period));
-  if (rows.length === 0) return `Sem gastos em ${monthName(period)}.`;
-  const lines = [`Quem registrou o quê em ${monthName(period)} (só registro, sem competição 😉):`];
-  for (const member of scope.members) {
-    const own = rows
-      .filter((r) => r.memberId === member.id && !r.isShared)
-      .reduce((sum, r) => sum + r.totalCents, 0);
-    const shared = rows
-      .filter((r) => r.memberId === member.id && r.isShared)
-      .reduce((sum, r) => sum + r.totalCents, 0);
-    if (own + shared > 0) {
-      lines.push(
-        `• ${member.name}: individual ${formatBRL(own)} · compartilhado ${formatBRL(shared)}`,
-      );
-    }
   }
   return lines.join('\n');
 }

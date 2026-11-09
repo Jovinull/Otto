@@ -533,12 +533,17 @@ async function paymentNotes(
     const open = statement.invoices
       .filter((i) => i.status !== 'future')
       .reduce((sum, i) => sum + i.remainingCents, 0);
+    const debt = statement.invoices.reduce((sum, i) => sum + i.remainingCents, 0);
     const left = open - transaction.amountCents;
-    if (open === 0)
-      notes.push(`${card.name} não tinha fatura em aberto: o valor fica como crédito.`);
-    else if (left > 0)
+    if (open === 0 && debt > 0) {
+      notes.push(`${card.name} não tinha fatura a pagar: o valor adianta as próximas parcelas.`);
+    } else if (open === 0) {
+      notes.push(`${card.name} não tinha dívida: o valor fica como crédito.`);
+    } else if (left > 0) {
       notes.push(`Pagamento parcial: ainda faltam ${formatBRL(left)} em ${card.name}.`);
-    else notes.push(`Fatura de ${card.name} quitada ✅`);
+    } else {
+      notes.push(`Fatura de ${card.name} quitada ✅`);
+    }
   }
   return notes;
 }
@@ -678,7 +683,7 @@ export async function recordDrafts(
   );
   if (toReserve) {
     settlement.notes.push(
-      `Se esse dinheiro é para o apartamento, confirme com /aporte ${formatBRL(toReserve.transaction.amountCents).replace('R$ ', '')}: transferência sozinha não conta na meta.`,
+      `Se esse dinheiro é para uma meta: /aporte META ${formatBRL(toReserve.transaction.amountCents).replace('R$ ', '')} @${toReserve.transaction.destinationAccountName} existente. Transferência sozinha não conta na meta.`,
     );
   }
   settlement.notes.push(...(await paymentNotes(deps, actor, items)));

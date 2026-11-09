@@ -2,6 +2,7 @@ import type { TransactionDraft } from '../../domain/finance/transactions';
 import { amountAppearsInText, matchAccount } from '../../domain/finance/transactions';
 import { canWrite } from '../../domain/household/authorization';
 import type { Interpretation, TransactionItem } from '../../infrastructure/ai/interpretation';
+import type { Stmt } from '../../infrastructure/database/client';
 import {
   monthRange,
   NAMED_PERIOD_LABEL,
@@ -21,7 +22,13 @@ import {
   setBudget,
   updateApartmentGoal,
 } from '../commands/planning';
-import { createGoal, linkGoalAccount, moveGoalFunds } from '../commands/goals';
+import {
+  createGoal,
+  isApartmentName,
+  linkedGoalOf,
+  linkGoalAccount,
+  moveGoalFunds,
+} from '../commands/goals';
 import { reportBalance } from '../commands/reconcile';
 import { invoicesReport } from '../queries/cards';
 import { accountFreeReport, coupleStatus, personalStatus, resolveMember } from '../queries/status';
@@ -44,6 +51,11 @@ import { analysisAnswer, consultPurchase } from './advisor';
 import { confirmLatest } from './pending';
 
 function toDraft(item: TransactionItem): TransactionDraft {
+  // Quem fala em numero de parcelas, mesmo "1 vez", esta falando de credito.
+  const paymentMethod =
+    item.installments !== null && item.payment_method === 'unknown'
+      ? 'credit'
+      : item.payment_method;
   return {
     kind: item.kind,
     amountText: item.amount_text,
@@ -54,8 +66,25 @@ function toDraft(item: TransactionItem): TransactionDraft {
     sourceAccountText: item.source_account_text,
     destinationAccountText: item.destination_account_text,
     dateText: item.date_text,
-    paymentMethod: item.payment_method,
+    paymentMethod,
     installments: item.installments,
+  };
+}
+
+const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** O modelo as vezes toma o nome do assistente, em "Otto, ...", como a pessoa citada. */
+function withoutAssistantName(interpretation: Interpretation): Interpretation {
+  const person = <T extends string | null>(value: T): T | null =>
+    value !== null && normalizeText(value) === 'otto' ? null : value;
+  const { query, budget, commitment, account, transactions } = interpretation;
+  return {
+    ...interpretation,
+    transactions: transactions.map((t) => ({ ...t, person_text: person(t.person_text) })),
+    query: query && { ...query, person_text: person(query.person_text) },
+    budget: budget && { ...budget, person_text: person(budget.person_text) },
+    commitment: commitment && { ...commitment, person_text: person(commitment.person_text) },
+    account: account && { ...account, owner_text: person(account.owner_text) },
   };
 }
 
@@ -103,6 +132,50 @@ function confirmationNeeded(
   return unverified ? 'Quero conferir o valor antes de anotar:' : null;
 }
 
+/** Transferir para um cofre ligado a uma unica meta e guardar para ela. */
+async function transferToLinkedVault(
+  deps: Deps,
+  actor: Actor,
+  interpretation: Interpretation,
+  message: string,
+): Promise<Effect | null> {
+  const [transfer, ...others] = interpretation.transactions;
+  if (
+    !transfer ||
+    others.length > 0 ||
+    transfer.kind !== 'transfer' ||
+    transfer.amount_text === null ||
+    interpretation.confidence === 'low' ||
+    !amountAppearsInText(transfer.amount_text, message) ||
+    !transfer.source_account_text ||
+    !transfer.destination_account_text
+  ) {
+    return null;
+  }
+  const accounts = actor.scope.accounts.filter((a) => a.kind !== 'credit_card');
+  const match = matchAccount(transfer.destination_account_text, accounts, {
+    memberId: actor.member.id,
+  });
+  if (match.status !== 'found') return null;
+  const goal = await linkedGoalOf(deps, actor, match.account.id);
+  if (!goal) return null;
+  return moveGoalFunds(
+    deps,
+    actor,
+    {
+      goalText: goal.name,
+      amountText: transfer.amount_text,
+      direction: 'in',
+      accountText: match.account.name,
+      sourceAccountText: transfer.source_account_text,
+      dateText: transfer.date_text,
+      kind: 'contribution',
+      requireLocation: false,
+    },
+    actor.eventId,
+  );
+}
+
 /**
  * Executa uma interpretacao. A saida do modelo e dado nao confiavel: cada caminho passa pelas
  * regras do dominio e so existe o que estiver neste switch.
@@ -110,10 +183,11 @@ function confirmationNeeded(
 export async function routeIntent(
   deps: Deps,
   actor: Actor,
-  interpretation: Interpretation,
+  received: Interpretation,
   message: string,
   addressed: boolean,
 ): Promise<Effect> {
+  const interpretation = withoutAssistantName(received);
   const { scope, today } = actor;
   const write = canWrite(actor.member);
 
@@ -127,6 +201,8 @@ export async function routeIntent(
           ? replyOnly('Não identifiquei nenhum lançamento nessa mensagem.')
           : { statements: [], replies: [] };
       }
+      const vault = await transferToLinkedVault(deps, actor, interpretation, message);
+      if (vault) return vault;
       const drafts = interpretation.transactions.map(toDraft);
       return recordDrafts(deps, actor, drafts, {
         origin: 'natural_language',
@@ -170,18 +246,15 @@ export async function routeIntent(
       ) {
         // Sem dia, pode ser valor avulso ("a luz veio 187"): nao vira previsao mensal sozinho.
         const value = commitment.amount_text ?? 'VALOR';
-        const kind = commitment.kind === 'income' ? 'receita' : 'despesa';
         return replyOnly(
-          `Isso se repete todo mês? Se sim, me diga o dia: /recorrente ${kind} ${value} dia=10 ${commitment.description}. Se é só desta vez, eu registro quando for ${commitment.kind === 'income' ? 'recebido' : 'pago'}.`,
+          `Isso se repete todo mês? Se sim, me diga o dia: ${commitment.kind === 'income' ? `/renda ${value} dia=10 nome=${commitment.description.replaceAll(' ', '_')}` : `/recorrente ${value} dia=10 ${commitment.description}`}. Se é só desta vez, eu registro quando for ${commitment.kind === 'income' ? 'recebido' : 'pago'}.`,
         );
       }
       if (
         commitment.amount_text !== null &&
         !amountAppearsInText(commitment.amount_text, message)
       ) {
-        return replyOnly(
-          'Não consegui confirmar o valor. Use /recorrente despesa 1200 dia=5 aluguel.',
-        );
+        return replyOnly('Não consegui confirmar o valor. Use /recorrente 1200 dia=5 aluguel.');
       }
       const schedule =
         commitment.due_day !== null
@@ -211,7 +284,7 @@ export async function routeIntent(
       return addCommitment(deps, actor, {
         accountId,
         kind: commitment.kind,
-        description: commitment.description,
+        description: capitalized(commitment.description),
         amountText: commitment.amount_text,
         ...schedule,
         personText: commitment.person_text,
@@ -220,7 +293,11 @@ export async function routeIntent(
     }
 
     case 'query_balance':
-      return replyOnly(await balancesReport(deps, scope));
+      return replyOnly(
+        interpretation.query?.account_text
+          ? await accountFreeReport(deps, actor, interpretation.query.account_text)
+          : await balancesReport(deps, scope),
+      );
 
     case 'query_spending': {
       const { range, label } = period(interpretation.query, today);
@@ -293,7 +370,8 @@ export async function routeIntent(
     case 'create_account': {
       if (!write) return replyOnly(READ_ONLY);
       const account = interpretation.account;
-      if (!account?.name_text) {
+      const nameText = account?.name_text ?? (account?.kind === 'joint' ? 'Conta conjunta' : null);
+      if (!account || !nameText) {
         return replyOnly('Qual o nome da conta? Exemplo: /addconta corrente Nubank saldo=1000');
       }
       if (account.opening_text !== null && !amountAppearsInText(account.opening_text, message)) {
@@ -301,18 +379,28 @@ export async function routeIntent(
           'Não consegui confirmar o valor. Use /addconta corrente Nome saldo=VALOR.',
         );
       }
-      const kind =
-        account.kind ??
-        (/cofre|caixinha/.test(normalizeText(account.name_text)) ? 'reserve' : 'checking');
-      return addAccount(deps, actor, {
-        kind,
-        name: account.name_text,
-        openingText: account.opening_text,
-        isDefault: account.role === 'primary',
-        closingDay: account.closing_day,
-        dueDay: account.due_day,
-        ownerText: account.owner_text,
-      });
+      // "Jennifer tem PicPay e Nubank" sao duas contas. Com saldo, o valor seria de qual?
+      const names =
+        account.opening_text === null
+          ? nameText.split(/\s+e\s+|\s*,\s*/i).filter(Boolean)
+          : [nameText];
+      const statements: Stmt[] = [];
+      const replies: string[] = [];
+      for (const name of names) {
+        const effect = await addAccount(deps, actor, {
+          kind:
+            account.kind ?? (/cofre|caixinha/.test(normalizeText(name)) ? 'reserve' : 'checking'),
+          name,
+          openingText: account.opening_text,
+          isDefault: account.role === 'primary',
+          closingDay: account.closing_day,
+          dueDay: account.due_day,
+          ownerText: account.owner_text,
+        });
+        statements.push(...effect.statements);
+        replies.push(...effect.replies.map((r) => r.text));
+      }
+      return { statements, replies: [{ text: replies.join('\n') }] };
     }
 
     case 'set_default_account':
@@ -339,7 +427,7 @@ export async function routeIntent(
       if (amounts.some((value) => !amountAppearsInText(value, message))) {
         return replyOnly('Não consegui confirmar os valores. Use /meta criar NOME valor=VALOR.');
       }
-      if (normalizeText(goal.goal_name).includes('apartamento')) {
+      if (isApartmentName(goal.goal_name)) {
         return updateApartmentGoal(deps, actor, {
           entry: goal.target_text,
           additionalCosts: null,
@@ -350,7 +438,7 @@ export async function routeIntent(
         });
       }
       return createGoal(deps, actor, {
-        name: goal.goal_name,
+        name: capitalized(goal.goal_name),
         targetText: goal.target_text,
         deadlineText: goal.deadline_text,
         plannedText: goal.planned_monthly_text,
@@ -369,7 +457,7 @@ export async function routeIntent(
         return replyOnly('Qual o valor? Exemplo: /retirada Viagem 200 @Conta');
       }
       if (!amountAppearsInText(goal.contribution_text, message)) {
-        return replyOnly('Não consegui confirmar o valor. Use /alocar ou /retirada.');
+        return replyOnly('Não consegui confirmar o valor. Use /aporte ou /retirada.');
       }
       return moveGoalFunds(
         deps,
