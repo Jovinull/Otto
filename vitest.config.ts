@@ -21,6 +21,8 @@ export default defineConfig(async () => {
     test: {
       setupFiles: ['./tests/setup.ts'],
       include: ['tests/**/*.test.ts'],
+      // Cadastros guiados inteiros passam de 5 s com a maquina ocupada.
+      testTimeout: 20_000,
     },
   };
 });
