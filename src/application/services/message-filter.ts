@@ -25,6 +25,9 @@ const FINANCIAL_TERMS = [
   'orcamento',
   'saldo',
   'fatura',
+  'faturas',
+  'cartoes',
+  'saldos',
   'parcela',
   'parcelas',
   'salario',
@@ -79,6 +82,22 @@ const FINANCIAL_TERMS = [
   'receber',
   'recebo',
   'gastar',
+  'conta',
+  'banco',
+  'cofre',
+  'cofres',
+  'metas',
+  'objetivo',
+  'tirei',
+  'retirei',
+  'coloquei',
+  'financeira',
+  'pagamento',
+  'nubank',
+  'picpay',
+  'santander',
+  'bradesco',
+  'itau',
 ];
 
 export function mentionsAssistant(text: string): boolean {
@@ -95,5 +114,9 @@ export function shouldInterpret(text: string, addressed: boolean): boolean {
   const words = normalizeText(text)
     .replace(/[^a-z ]/g, ' ')
     .split(' ');
-  return words.some((word) => FINANCIAL_TERMS.includes(word));
+  return words.some((word, index) => {
+    if (!FINANCIAL_TERMS.includes(word)) return false;
+    // "me conta uma coisa": o verbo, nao a conta do banco.
+    return word !== 'conta' || !['me', 'te', 'nos', 'lhe'].includes(words[index - 1] ?? '');
+  });
 }

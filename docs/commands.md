@@ -1,79 +1,98 @@
 # Comandos
 
-Todos funcionam sem IA. Opções `chave=valor` podem vir em qualquer ordem. `/ajuda TEMA` mostra resumos no próprio Telegram.
+Todos funcionam sem IA. Nomes com espaço podem ser escritos como foram cadastrados:
+`@Mercado Pago`. Em opções com `=`, use `_` no lugar do espaço: `nome=Conta_Nova`.
 
 ## Lançamentos
 
-| Comando                                                                                       | Exemplo                                                           |
-| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `/gasto VALOR descrição [#categoria] [@conta] [ontem\|03/11] [cartao] [6x] [casal] [de:Nome]` | `/gasto 80 mercado de:Jennifer` · `/gasto 1200 celular cartao 6x` |
-| `/receita VALOR descrição [#categoria] [@conta] [data]`                                       | `/receita 4200 salario`                                           |
-| `/transferir VALOR origem para destino`                                                       | `/transferir 500 Nubank para Reserva`                             |
-| `/pagar_fatura VALOR origem para cartao`                                                      | `/pagar_fatura 850 Nubank para Cartao`                            |
-| `/corrigir CODIGO valor\|categoria\|data NOVO`                                                | `/corrigir a1b2c3 valor 30,00`                                    |
-| `/estornar CODIGO`                                                                            | pede confirmação                                                  |
-| `/parcela_data CODIGO DD/MM/AAAA`                                                             | primeiro vencimento do parcelamento                               |
-| `/parcela_paga CODIGO`                                                                        | marca a próxima parcela como quitada                              |
-
-O CODIGO aparece em cada confirmação (`#a1b2c3`) e em `/ultimos`.
+| Comando                                                                                       | O que faz                                         |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `/gasto VALOR descrição [#categoria] [@conta] [ontem\|03/11] [cartao] [6x] [casal] [de:Nome]` | registra despesa                                  |
+| `/receita VALOR descrição [#categoria] [@conta] [data]`                                       | registra receita avulsa                           |
+| `/transferir VALOR origem para destino`                                                       | move entre contas, sem virar gasto ou receita     |
+| `/pagar_fatura VALOR conta para cartão`                                                       | paga fatura e informa se quitou                   |
+| `/corrigir CÓDIGO valor\|categoria\|data NOVO`                                                | corrige lançamento                                |
+| `/estornar CÓDIGO`                                                                            | anula lançamento ou aporte, com confirmação       |
+| `/parcela_data CÓDIGO DD/MM/AAAA`                                                             | 1º vencimento de parcelamento sem cartão com dias |
+| `/parcela_paga CÓDIGO`                                                                        | quita parcela sem cartão com dias                 |
 
 ## Consultas
 
-| Comando                       | Mostra                                                                                                               |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `/resumo` ou `/mes [MM/AAAA]` | Entradas, saídas, resultado e categorias do mês                                                                      |
-| `/semana`                     | Semana atual (segunda a domingo)                                                                                     |
-| `/comparar`                   | Mês atual vs mesmo intervalo do mês anterior                                                                         |
-| `/individual`                 | Gastos individuais e compartilhados por pessoa                                                                       |
-| `/contas`                     | Saldos conhecidos e dívida dos cartões                                                                               |
-| `/compromissos`               | Contas em aberto e renda prevista do mês                                                                             |
-| `/orcamento [categoria]`      | Situação dos orçamentos                                                                                              |
-| `/metas`                      | Meta do apartamento                                                                                                  |
-| `/parcelas`                   | Parcelamentos ativos                                                                                                 |
-| `/fatura [cartão]`            | Faturas por ciclo: fechada, atual, em aberto e parcelas futuras                                                      |
-| `/ultimos [N]`                | Últimos lançamentos com código                                                                                       |
-| `/categorias`                 | Categorias e códigos                                                                                                 |
-| `/analise [pergunta]`         | Análise do mês (IA com números verificados, ou relatório puro)                                                       |
-| `/configurar`                 | Cadastro guiado; `pausar`, `refazer`, `status` ou uma etapa (`renda`, `contas`, `fixas`, `orcamento`, `apartamento`) |
-| `/comandos`                   | Lista todos os comandos com uma descrição curta                                                                      |
-| `/ia`                         | Consumo estimado de IA no dia e no mês                                                                               |
-| `/status`                     | Fila, IA configurada, fuso                                                                                           |
-| `/id`                         | IDs do chat e do usuário (antes do bootstrap, responde a qualquer um)                                                |
+| Comando                  | O que faz                                                          |
+| ------------------------ | ------------------------------------------------------------------ |
+| `/statuspessoal [Nome]`  | renda, gastos, contas, cartões, metas e valor potencialmente livre |
+| `/statuscasal`           | o mesmo para o casal, sem somar conta compartilhada duas vezes     |
+| `/resumo [MM/AAAA]`      | resumo do mês                                                      |
+| `/semana`                | semana atual                                                       |
+| `/comparar`              | mês atual contra o anterior                                        |
+| `/contas`                | todas as contas e cartões, com reservado e livre                   |
+| `/minhascontas [Nome]`   | contas e cartões da pessoa, com os padrões marcados                |
+| `/compromissos`          | contas a pagar e renda prevista e recebida no mês                  |
+| `/orcamento [categoria]` | situação dos orçamentos                                            |
+| `/metas`, `/meta NOME`   | progresso e onde está o dinheiro                                   |
+| `/fatura [cartão]`       | faturas: total, pago e pendente                                    |
+| `/parcelas`              | parcelamentos ativos                                               |
+| `/ultimos [N]`           | últimos lançamentos, com código                                    |
+| `/categorias`            | categorias e códigos                                               |
+| `/analise [pergunta]`    | análise do mês                                                     |
 
-## Cadastro e planejamento
+## Contas, renda e contas fixas
 
-| Comando                                                                | Exemplo                                                                                                           |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `/addconta tipo Nome [saldo=] [padrao] [fecha=] [vence=] [dono=]`      | `/addconta corrente Nubank saldo=1200,50 padrao` · tipos: corrente, poupanca, dinheiro, reserva, conjunta, cartao |
-| `/padrao Conta`                                                        | conta padrão de quem envia                                                                                        |
-| `/addcategoria Nome essencial\|discricionaria\|outra`                  | `/addcategoria Pets essencial`                                                                                    |
-| `/orcamento categoria VALOR [de=Nome]`                                 | `/orcamento delivery 250` · `/orcamento total 3000`                                                               |
-| `/meta entrada= custos= prazo=MM/AAAA aporte= reserva= inicial=`       | `/meta entrada=80000 prazo=12/2027`                                                                               |
-| `/aporte VALOR [data]` · `/retirada VALOR` · `/desfazer_aporte CODIGO` | `/aporte 500`                                                                                                     |
-| `/recorrente despesa\|receita VALOR [dia=N\|util=N] nome [de=Nome]`    | `/recorrente despesa 1200 dia=5 aluguel` · use `?` para valor variável                                            |
-| `/renda VALOR dia=N\|util=N`                                           | `/renda 4200 util=5`                                                                                              |
+| Comando                                                                                                                                                                                    | O que faz                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `/addconta corrente\|poupanca\|dinheiro\|reserva\|conjunta\|cartao Nome [saldo=] [padrao] [alternativa] [fecha=] [vence=] [limite=] [disponivel=] [divida=] [banco=] [descricao=] [dono=]` | cria conta ou cartão                                        |
+| `/contapadrao [Conta]`, `/cartaopadrao [Cartão]`                                                                                                                                           | mostra ou define o seu padrão; `de=Nome` para outra pessoa  |
+| `/saldo Conta VALOR`                                                                                                                                                                       | compara com o saldo real; diferença só ajusta com aprovação |
+| `/renda VALOR dia=N\|util=N [@Conta] [nome=] [de=] [irregular]`                                                                                                                            | cadastra uma fonte de renda; não registra recebimento       |
+| `/recebi [nome] [valor] [@Conta]`                                                                                                                                                          | marca a renda como recebida, sem duplicar                   |
+| `/recorrente VALOR dia=N\|util=N nome`                                                                                                                                                     | conta fixa; `?` no valor se variar                          |
+| `/orcamento categoria VALOR [de=Nome]`                                                                                                                                                     | define limite mensal                                        |
+| `/addcategoria Nome essencial\|discricionaria\|outra`                                                                                                                                      | cria categoria                                              |
+
+## Metas
+
+| Comando                                                     | O que faz                                                |
+| ----------------------------------------------------------- | -------------------------------------------------------- |
+| `/meta criar NOME valor= [prazo=MM/AAAA] [aporte=] [dono=]` | cria uma meta                                            |
+| `/meta NOME valor= prazo= aporte= nome= nota=`              | altera a meta                                            |
+| `/meta remover NOME`                                        | arquiva, sem mover dinheiro                              |
+| `/meta entrada= custos= prazo= aporte= reserva= inicial=`   | configura o apartamento                                  |
+| `/aporte [META] VALOR [@Conta] [de:Origem] [data]`          | guarda dinheiro; com `de:` faz a transferência real      |
+| `/aporte META VALOR @Conta existente`                       | dinheiro que já existia; não conta como aporte do mês    |
+| `/retirada [META] VALOR [@Conta]`                           | libera dinheiro da meta                                  |
+| `/vincular META @Conta`                                     | define onde a meta fica; cria o cofre se ele não existir |
 
 ## Editar e remover
 
-| Comando                                                                 | Exemplo                                                                                                                                                    |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/editconta Nome [nome=] [saldo=] [fecha=] [vence=] [dono=] [padrao]`   | `/editconta Nubank fecha=5 vence=12` · `vence=-` apaga · `saldo=?` volta a desconhecido · `nome=Nubank_Felipe` (use `_` no lugar de espaço) · `dono=casal` |
-| `/removerconta Nome`                                                    | arquiva após confirmação; histórico e totais continuam                                                                                                     |
-| `/editcategoria codigo [nome=] [tipo=essencial\|discricionaria\|outra]` | `/editcategoria lazer nome=Passeios`                                                                                                                       |
-| `/editrecorrente nome [valor=] [dia=\|util=]`                           | `/editrecorrente aluguel valor=1300 dia=10` · `valor=?` para variável                                                                                      |
-| `/removerrecorrente nome`                                               | deixa de prever; pagamentos já registrados continuam                                                                                                       |
-| `/removerorcamento categoria\|total [de=Nome]`                          | `/removerorcamento delivery`                                                                                                                               |
+| Comando                                                                                                      | O que faz                           |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| `/editconta Nome nome= saldo= fecha= vence= dono= banco= descricao= limite= disponivel= alternativa= padrao` | altera conta ou cartão              |
+| `/removerconta Nome`                                                                                         | arquiva a conta; histórico continua |
+| `/editcategoria codigo nome= tipo=`                                                                          | renomeia ou muda o tipo             |
+| `/editrecorrente nome valor= dia= util=`                                                                     | altera conta fixa ou renda          |
+| `/removerrecorrente nome`                                                                                    | deixa de prever                     |
+| `/removerorcamento categoria\|total [de=Nome]`                                                               | remove o limite                     |
 
-Limite de orçamento e campos da meta mudam com os próprios `/orcamento` e `/meta`. Lançamentos mudam com `/corrigir` e `/estornar`.
+## Sistema
 
-## Preferências (administradores)
-
-| Comando                                                          | Efeito               |
-| ---------------------------------------------------------------- | -------------------- |
-| `/tom neutro\|amigavel\|firme`                                   | Estilo das respostas |
-| `/notificacoes on\|off`                                          | Liga/desliga todas   |
-| `/notificacoes contas\|orcamento\|semanal\|mensal\|meta on\|off` | Liga/desliga uma     |
+| Comando                                                                                        | O que faz                                          |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `/configurar [status\|pausar\|refazer\|renda\|contas\|fixas\|orcamento\|apartamento\|alertas]` | cadastro guiado                                    |
+| `/tom neutro\|amigavel\|firme`                                                                 | estilo das respostas (admin)                       |
+| `/notificacoes`                                                                                | mostra os avisos; `on\|off` liga e desliga (admin) |
+| `/notificacoes contas\|orcamento\|semanal\|mensal\|meta\|dicas on\|off`                        | liga ou desliga um tipo                            |
+| `/notificacoes contas dias=5`, `orcamento avisos=70,100`, `semanal dia=dom`, `meta dia=25`     | frequência dos avisos                              |
+| `/ia`, `/status`, `/id`                                                                        | consumo de IA, saúde do Otto, IDs                  |
+| `/ajuda [tema]`, `/comandos`                                                                   | ajuda                                              |
 
 ## Linguagem natural
 
-Mensagens comuns também funcionam: "Gastei 27 reais com Uber", "Jennifer comprou 80 no mercado", "Transferi 300 para minha reserva", "Quanto gastamos este mês?", "Podemos pedir uma pizza de 90?". Conversa sem número nem termo financeiro não é enviada à IA e não recebe resposta. Para chamar o Otto explicitamente, cite "Otto" ou responda a uma mensagem dele. Respostas curtas como "sim", "não" ou o dado pedido completam a pendência aberta de quem enviou.
+Tudo isso também funciona escrevendo normalmente. Exemplos:
+
+- "Gastei 27 reais com Uber", "Comprei um tênis de 300 no cartão em 3 vezes"
+- "Paguei R$ 300 da fatura do PicPay", "A fatura do Nubank foi paga"
+- "Meu salário caiu", "Recebi só 2.000 do salário"
+- "Guardei 500 para a viagem no Cofre", "Tirei 200 da reserva de emergência"
+- "Meu Nubank está com 830 agora"
+- "Quanto ainda posso gastar este mês?", "Onde está o dinheiro do apartamento?"
+- "Qual é a nossa situação financeira hoje?", "Podemos pedir uma pizza de 90?"

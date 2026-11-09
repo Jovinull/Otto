@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import dataset from '../../evals/interpretation.json';
-import { createHarness, withAccounts } from '../fixtures/harness';
+import { createHarness, JENNIFER_ID, withAccounts } from '../fixtures/harness';
 import type { EvalCase } from './golden';
 import { toInterpretation } from './golden';
 
@@ -10,7 +10,14 @@ import { toInterpretation } from './golden';
  * A avaliacao do modelo real fica em `pnpm eval:openai`.
  */
 const cases = dataset.cases as EvalCase[];
-const CONFIG_TABLES = ['budgets', 'financial_goals', 'recurring_entries', 'goal_contributions'];
+const CONFIG_TABLES = [
+  'budgets',
+  'financial_goals',
+  'recurring_entries',
+  'goal_contributions',
+  'financial_accounts',
+  'balance_reconciliations',
+];
 
 interface Outcome {
   id: string;
@@ -21,6 +28,7 @@ interface Outcome {
 async function run(evalCase: EvalCase): Promise<Outcome> {
   const h = await createHarness();
   await withAccounts(h);
+  await h.say('/addconta corrente Conta_Jennifer saldo=500', { from: JENNIFER_ID });
   for (const command of evalCase.setup ?? []) await h.say(command);
 
   const configCount = async () => {
@@ -29,7 +37,10 @@ async function run(evalCase: EvalCase): Promise<Outcome> {
     const [goal] = await h.query<{ planned: number | null }>(
       'SELECT planned_monthly_cents AS planned FROM financial_goals',
     );
-    return `${total}:${goal?.planned ?? ''}`;
+    const [members] = await h.query<{ preferences: string }>(
+      'SELECT group_concat(preferences) AS preferences FROM household_members',
+    );
+    return `${total}:${goal?.planned ?? ''}:${members?.preferences ?? ''}`;
   };
   const transactionsBefore = await h.count('financial_transactions');
   const configBefore = await configCount();

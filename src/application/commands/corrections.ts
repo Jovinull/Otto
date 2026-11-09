@@ -13,6 +13,7 @@ import { normalizeText } from '../../shared/text';
 import type { Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
 import { findTransactionByRef, shortId } from '../queries/finance';
+import { requestContributionVoid } from './planning';
 import type { PendingPayload } from './record-transactions';
 import { confirmationButtons, createPendingStatement } from './record-transactions';
 import { auditStatement } from './shared';
@@ -130,6 +131,20 @@ async function hasInstallmentPlan(deps: Deps, transactionId: string): Promise<bo
   return rows.length > 0;
 }
 
+async function isGoalTransfer(deps: Deps, transactionId: string): Promise<boolean> {
+  const rows = await deps.db
+    .select({ id: goalContributions.id })
+    .from(goalContributions)
+    .where(
+      and(
+        eq(goalContributions.transactionId, transactionId),
+        eq(goalContributions.status, 'confirmed'),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 export async function correctTransaction(
   deps: Deps,
   actor: Actor,
@@ -141,6 +156,11 @@ export async function correctTransaction(
   const householdId = actor.scope.household.id;
   const transaction = await findTransactionByRef(deps.db, householdId, reference, actor.member.id);
   if (!transaction) return replyOnly(NOT_FOUND);
+  if (field === 'amount' && (await isGoalTransfer(deps, transaction.id))) {
+    return replyOnly(
+      'Essa transferência é um aporte em meta: estorne e registre de novo, para meta e contas não divergirem.',
+    );
+  }
   if (field === 'amount' && (await hasInstallmentPlan(deps, transaction.id))) {
     return replyOnly(
       'Compra parcelada não pode ter o valor corrigido: estorne e registre de novo.',
@@ -179,7 +199,10 @@ export async function requestVoid(
     reference,
     actor.member.id,
   );
-  if (!transaction) return replyOnly(NOT_FOUND);
+  if (!transaction) {
+    // Aportes usam o mesmo /estornar, com o codigo mostrado na resposta do aporte.
+    return reference ? requestContributionVoid(deps, actor, reference) : replyOnly(NOT_FOUND);
+  }
   const pendingId = deps.newId();
   return {
     statements: [
@@ -236,6 +259,16 @@ export async function applyVoid(
         .update(installmentPlans)
         .set({ status: 'cancelled' })
         .where(eq(installmentPlans.transactionId, transaction.id)),
+      // A reserva feita por esta transferencia deixa de existir junto com ela.
+      deps.db
+        .update(goalContributions)
+        .set({ status: 'voided' })
+        .where(
+          and(
+            eq(goalContributions.transactionId, transaction.id),
+            eq(goalContributions.status, 'confirmed'),
+          ),
+        ),
       auditStatement(deps, actor, 'transaction.voided', 'transaction', transaction.id, {
         before: { status: 'confirmed', amountCents: transaction.amountCents },
         after: { status: 'voided' },
@@ -280,6 +313,7 @@ export async function applyContributionVoid(
     .limit(1);
   const contribution = rows[0];
   if (!contribution) return { statements: extra, replies: [{ text: 'Aporte não encontrado.' }] };
+  const now = deps.now();
   return {
     statements: [
       ...extra,
@@ -287,6 +321,26 @@ export async function applyContributionVoid(
         .update(goalContributions)
         .set({ status: 'voided' })
         .where(eq(goalContributions.id, contribution.id)),
+      // O aporte com transferencia desfaz tambem o movimento entre as contas.
+      ...(contribution.transactionId
+        ? [
+            deps.db
+              .update(tx)
+              .set({
+                status: 'voided',
+                voidedAt: now,
+                voidedByMemberId: actor.member.id,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(tx.id, contribution.transactionId),
+                  eq(tx.householdId, householdId),
+                  eq(tx.status, 'confirmed'),
+                ),
+              ),
+          ]
+        : []),
       auditStatement(
         deps,
         actor,
@@ -299,6 +353,10 @@ export async function applyContributionVoid(
         },
       ),
     ],
-    replies: [{ text: `Aporte de ${formatBRL(contribution.amountCents)} desfeito.` }],
+    replies: [
+      {
+        text: `Aporte de ${formatBRL(contribution.amountCents)} desfeito.${contribution.transactionId ? ' A transferência entre as contas também foi desfeita.' : ''}`,
+      },
+    ],
   };
 }

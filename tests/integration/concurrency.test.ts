@@ -232,7 +232,7 @@ describe('limite de subrequisicoes do plano gratuito', () => {
   it('cada tipo de mensagem cabe numa invocacao', async () => {
     await h.say('/addconta corrente Principal saldo=1000 padrao');
     await h.say('/orcamento transporte 30');
-    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/recorrente 1200 dia=5 aluguel');
     await h.say('/meta entrada=80000 aporte=1000');
     const costs: Record<string, number> = {
       gasto: await invocationCost(() => h.say('/gasto 27 uber')),

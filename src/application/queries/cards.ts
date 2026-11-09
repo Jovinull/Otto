@@ -98,6 +98,12 @@ export async function cardStatement(
       amountCents: part.amountCents,
     })),
   ];
+  if (card.openingBalanceCents !== null && card.openingBalanceCents < 0) {
+    charges.push({
+      closingPeriod: cycleForPurchase(card.openingBalanceDate ?? today, days).closingPeriod,
+      amountCents: -card.openingBalanceCents,
+    });
+  }
   const { invoices, creditCents } = buildInvoices(charges, payments, days, today);
   return { card, invoices, creditCents };
 }

@@ -95,6 +95,7 @@ const EXPORT_TABLES = {
   budgets: schema.budgets,
   financial_goals: schema.financialGoals,
   goal_contributions: schema.goalContributions,
+  balance_reconciliations: schema.balanceReconciliations,
   recurring_entries: schema.recurringEntries,
   audit_events: schema.auditEvents,
 } as const;
@@ -111,6 +112,7 @@ export async function exportHousehold(deps: Deps, householdId: string) {
     budgets,
     goals,
     contributions,
+    reconciliations,
     recurring,
     audit,
   ] = await deps.db.batch([
@@ -146,6 +148,10 @@ export async function exportHousehold(deps: Deps, householdId: string) {
       .where(eq(schema.goalContributions.householdId, householdId)),
     deps.db
       .select()
+      .from(EXPORT_TABLES.balance_reconciliations)
+      .where(eq(schema.balanceReconciliations.householdId, householdId)),
+    deps.db
+      .select()
       .from(EXPORT_TABLES.recurring_entries)
       .where(eq(schema.recurringEntries.householdId, householdId)),
     deps.db
@@ -164,6 +170,7 @@ export async function exportHousehold(deps: Deps, householdId: string) {
     budgets,
     financial_goals: goals,
     goal_contributions: contributions,
+    balance_reconciliations: reconciliations,
     recurring_entries: recurring,
     audit_events: audit,
   };
@@ -219,6 +226,9 @@ export async function eraseHousehold(deps: Deps, householdId: string): Promise<v
     db.delete(schema.aiUsage).where(eq(schema.aiUsage.householdId, householdId)),
     db.delete(schema.incomingEvents).where(eq(schema.incomingEvents.householdId, householdId)),
     db.delete(schema.outgoingMessages).where(eq(schema.outgoingMessages.householdId, householdId)),
+    db
+      .delete(schema.balanceReconciliations)
+      .where(eq(schema.balanceReconciliations.householdId, householdId)),
     db
       .delete(schema.financialAccounts)
       .where(eq(schema.financialAccounts.householdId, householdId)),

@@ -4,6 +4,7 @@ import {
   buttonData,
   createHarness,
   DEFAULT_NOW,
+  FELIPE_ID,
   interpretation,
   item,
   JENNIFER_ID,
@@ -151,15 +152,15 @@ describe('transferencias e cartao', () => {
     expect(h.messaging.last()).toContain('Entrou: R$ 0,00 · Saiu: R$ 0,00');
     await h.say('/contas');
     const report = h.messaging.last();
-    expect(report).toContain('Principal: R$ 500,00');
-    expect(report).toContain('Reserva: R$ 1.000,00');
+    expect(report).toContain('Principal (Felipe): R$ 500,00');
+    expect(report).toContain('Reserva (Felipe): R$ 1.000,00');
   });
 
   it('18. compra no cartao e pagamento da fatura nao duplicam a despesa', async () => {
     await h.say('/gasto 300 sapato cartao @Nubank');
     await h.say('/contas');
     expect(h.messaging.last()).toContain('dívida em aberto R$ 300,00');
-    expect(h.messaging.last()).toContain('Principal: R$ 1.000,00');
+    expect(h.messaging.last()).toContain('Principal (Felipe): R$ 1.000,00');
 
     await h.say('/pagar_fatura 300 Principal para Nubank');
     await h.say('/resumo');
@@ -167,7 +168,7 @@ describe('transferencias e cartao', () => {
 
     await h.say('/contas');
     expect(h.messaging.last()).toContain('dívida em aberto R$ 0,00');
-    expect(h.messaging.last()).toContain('Principal: R$ 700,00');
+    expect(h.messaging.last()).toContain('Principal (Felipe): R$ 700,00');
   });
 
   it('parcelamento guarda cronograma sem inventar vencimento', async () => {
@@ -209,7 +210,7 @@ describe('transferencias e cartao', () => {
     await h.say('/addconta reserva Caixinha saldo=0');
     await h.say('/transferir 300 Principal para Caixinha');
     await h.say('/contas');
-    expect(h.messaging.last()).toContain('Caixinha: R$ 300,00');
+    expect(h.messaging.last()).toContain('Caixinha (Felipe): R$ 300,00');
   });
 
   it('saldo desconhecido nunca e apresentado como saldo real', async () => {
@@ -232,7 +233,13 @@ describe('consultas', () => {
     await aiSays(
       'Quanto gastamos este mês?',
       interpretation('query_spending', {
-        query: { period: 'this_month', month_text: null, category_slug: null, person_text: null },
+        query: {
+          account_text: null,
+          period: 'this_month',
+          month_text: null,
+          category_slug: null,
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('R$ 230,00');
@@ -241,6 +248,7 @@ describe('consultas', () => {
       'Quanto Jennifer gastou com supermercado?',
       interpretation('query_spending', {
         query: {
+          account_text: null,
           period: 'this_month',
           month_text: null,
           category_slug: 'supermercado',
@@ -254,6 +262,7 @@ describe('consultas', () => {
       'Quanto eu gastei com delivery?',
       interpretation('query_spending', {
         query: {
+          account_text: null,
           period: 'this_month',
           month_text: null,
           category_slug: 'delivery',
@@ -266,7 +275,13 @@ describe('consultas', () => {
     await aiSays(
       'E quanto gastamos em outubro?',
       interpretation('query_spending', {
-        query: { period: null, month_text: 'outubro', category_slug: null, person_text: null },
+        query: {
+          account_text: null,
+          period: null,
+          month_text: 'outubro',
+          category_slug: null,
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('R$ 999,00');
@@ -276,7 +291,13 @@ describe('consultas', () => {
     await aiSays(
       'Quanto gastamos este mês?',
       interpretation('query_spending', {
-        query: { period: 'this_month', month_text: null, category_slug: null, person_text: null },
+        query: {
+          account_text: null,
+          period: 'this_month',
+          month_text: null,
+          category_slug: null,
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('Não encontrei gastos');
@@ -291,19 +312,28 @@ describe('consultas', () => {
     await aiSays(
       'Quanto entrou e saiu nos últimos sete dias?',
       interpretation('query_cashflow', {
-        query: { period: 'last_7_days', month_text: null, category_slug: null, person_text: null },
+        query: {
+          account_text: null,
+          period: 'last_7_days',
+          month_text: null,
+          category_slug: null,
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('Entrou: R$ 500,00');
     expect(h.messaging.last()).toContain('Saiu em despesas: R$ 40,00');
   });
 
-  it('relatorio individual separa compartilhado', async () => {
+  it('status do casal separa individual de compartilhado', async () => {
     await h.say('/gasto 100 mercado casal');
-    await h.say('/gasto 30 lanche', { from: JENNIFER_ID });
-    await h.say('/individual');
-    expect(h.messaging.last()).toContain('Felipe: individual R$ 0,00 · compartilhado R$ 100,00');
-    expect(h.messaging.last()).toContain('Jennifer: individual R$ 30,00');
+    await h.say('/gasto 40 lanche');
+    await h.say('/gasto 25 livro', { from: JENNIFER_ID });
+    await h.say('/statuscasal');
+    const text = h.messaging.last();
+    expect(text).toContain('gastos individuais R$ 40,00');
+    expect(text).toContain('gastos individuais R$ 25,00');
+    expect(text).toContain('Gastos compartilhados: R$ 100,00');
   });
 
   it('comparativo so usa categorias com base suficiente', async () => {
@@ -394,7 +424,13 @@ describe('orcamento', () => {
     await aiSays(
       'Quanto ainda podemos gastar com delivery?',
       interpretation('query_budget', {
-        query: { period: null, month_text: null, category_slug: 'delivery', person_text: null },
+        query: {
+          account_text: null,
+          period: null,
+          month_text: null,
+          category_slug: 'delivery',
+          person_text: null,
+        },
       }),
     );
     expect(h.messaging.last()).toContain('R$ 100,00 de R$ 250,00 (40%), restam R$ 150,00');
@@ -452,9 +488,9 @@ describe('meta do apartamento', () => {
     await h.say('/aporte 25000');
     await h.say('/metas');
     const report = h.messaging.last();
-    expect(report).toContain('Guardado e confirmado: R$ 25.000,00');
+    expect(report).toContain('Reservado: R$ 25.000,00');
     expect(report).toContain('Progresso: 25%');
-    expect(report).toContain('Falta: R$ 75.000,00');
+    expect(report).toContain('Faltam: R$ 75.000,00');
     expect(report).toContain('R$ 6.250,00/mês por 12 meses');
     expect(report).toContain('ignora rendimentos');
   });
@@ -462,14 +498,14 @@ describe('meta do apartamento', () => {
   it('17. aporte pretendido nao conta como guardado', async () => {
     await h.say('/meta entrada=80000 aporte=1500');
     await h.say('/metas');
-    expect(h.messaging.last()).toContain('Guardado e confirmado: R$ 0,00');
+    expect(h.messaging.last()).toContain('Reservado: R$ 0,00');
     expect(h.messaging.last()).toContain('Realizado neste mês: R$ 0,00');
     expect(await h.count('goal_contributions')).toBe(0);
   });
 
   it('meta nasce sem valores inventados e reserva fica separada', async () => {
     await h.say('/metas');
-    expect(h.messaging.last()).toContain('ainda não criada');
+    expect(h.messaging.last()).toContain('Nenhuma meta ainda');
     await h.say('/meta reserva=5000');
     await h.say('/metas');
     expect(h.messaging.last()).toContain('Valor-alvo ainda não definido');
@@ -481,17 +517,17 @@ describe('meta do apartamento', () => {
     await h.say('/meta entrada=80000');
     await h.say('/transferir 500 Principal para Reserva');
     await h.say('/metas');
-    expect(h.messaging.last()).toContain('Guardado e confirmado: R$ 0,00');
+    expect(h.messaging.last()).toContain('Reservado: R$ 0,00');
   });
 
   it('aporte pode ser desfeito com confirmacao', async () => {
     await h.say('/meta entrada=80000');
     await h.say('/aporte 500');
-    const match = /desfazer_aporte (\w+)/.exec(h.messaging.last());
-    await h.say(`/desfazer_aporte ${match![1]}`);
+    const match = /estornar (\w+)/.exec(h.messaging.last());
+    await h.say(`/estornar ${match![1]}`);
     await h.press(buttonData(h.messaging, 'c'));
     await h.say('/metas');
-    expect(h.messaging.last()).toContain('Guardado e confirmado: R$ 0,00');
+    expect(h.messaging.last()).toContain('Reservado: R$ 0,00');
   });
 
   it('aporte em linguagem natural respeita a data informada', async () => {
@@ -500,6 +536,7 @@ describe('meta do apartamento', () => {
       'Guardei 500 ontem pro apartamento',
       interpretation('register_goal_contribution', {
         goal: {
+          target_text: null,
           entry_text: null,
           additional_costs_text: null,
           deadline_text: null,
@@ -508,9 +545,15 @@ describe('meta do apartamento', () => {
           initial_confirmed_text: null,
           contribution_text: '500',
           contribution_date_text: 'ontem',
+          goal_name: null,
+          account_text: null,
+          source_account_text: null,
         },
       }),
     );
+    expect(h.messaging.last()).toContain('esse dinheiro já está em alguma conta');
+    expect(await h.count('goal_contributions')).toBe(0);
+    await h.say('não sei');
     const [row] = await h.query<{ contribution_date: string }>(
       'SELECT contribution_date FROM goal_contributions',
     );
@@ -523,6 +566,7 @@ describe('meta do apartamento', () => {
       'Quero guardar 1500 por mês',
       interpretation('set_goal', {
         goal: {
+          target_text: null,
           entry_text: null,
           additional_costs_text: null,
           deadline_text: null,
@@ -531,6 +575,9 @@ describe('meta do apartamento', () => {
           initial_confirmed_text: null,
           contribution_text: null,
           contribution_date_text: null,
+          goal_name: null,
+          account_text: null,
+          source_account_text: null,
         },
       }),
     );
@@ -554,7 +601,7 @@ describe('recorrencias e previsao', () => {
   });
 
   it('compromisso nao fica pago sozinho; pagamento relatado da baixa uma vez', async () => {
-    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/recorrente 1200 dia=5 aluguel');
     await h.say('/compromissos');
     expect(h.messaging.last()).toContain('aluguel: R$ 1.200,00');
     expect(await h.count('recurring_settlements')).toBe(0);
@@ -569,7 +616,7 @@ describe('recorrencias e previsao', () => {
   });
 
   it('estorno reabre a conta prevista', async () => {
-    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/recorrente 1200 dia=5 aluguel');
     await h.say('/gasto 1200 aluguel');
     const [row] = await txs();
     await h.say(`/estornar ${code(row!.id)}`);
@@ -582,6 +629,8 @@ describe('recorrencias e previsao', () => {
       'Nosso aluguel é 1200 reais e vence todo dia 5.',
       interpretation('register_commitment', {
         commitment: {
+          account_text: null,
+          is_monthly: false,
           kind: 'expense',
           description: 'aluguel',
           amount_text: '1200',
@@ -690,7 +739,7 @@ describe('edicao de cadastros', () => {
     await h.say('/gasto 100 mercado @Itau');
     await h.say('/editconta Itau saldo=2000');
     await h.say('/contas');
-    expect(h.messaging.last()).toContain('Itau: R$ 1.900,00');
+    expect(h.messaging.last()).toContain('Itau (Felipe): R$ 1.900,00');
     await h.say('/editconta Itau saldo=?');
     expect((await account('Itau'))!.opening_balance_cents).toBeNull();
   });
@@ -701,8 +750,14 @@ describe('edicao de cadastros', () => {
     await h.say('/editconta Nubank nome=Itau');
     expect(h.messaging.last()).toContain('Já existe');
     await h.say('/editconta Nubank nome=Nubank_Felipe dono=Felipe padrao');
-    expect(await account('Nubank Felipe')).toMatchObject({ is_default: 1 });
-    expect((await account('Itau'))!.is_default).toBe(0);
+    const [felipe] = await h.query<{ preferences: string }>(
+      'SELECT preferences FROM household_members WHERE telegram_user_id = ?',
+      FELIPE_ID,
+    );
+    const nubank = await h.query<{ id: string }>(
+      "SELECT id FROM financial_accounts WHERE name = 'Nubank Felipe'",
+    );
+    expect(JSON.parse(felipe!.preferences).defaultAccountId).toBe(nubank[0]!.id);
   });
 
   it('arquivar conta pede confirmacao e preserva o historico', async () => {
@@ -727,7 +782,7 @@ describe('edicao de cadastros', () => {
   });
 
   it('edita e remove recorrencia sem apagar pagamentos', async () => {
-    await h.say('/recorrente despesa 1200 dia=5 aluguel');
+    await h.say('/recorrente 1200 dia=5 aluguel');
     await h.say('/editrecorrente aluguel valor=1300 dia=10');
     await h.say('/compromissos');
     expect(h.messaging.last()).toContain('aluguel: R$ 1.300,00 (10/11)');

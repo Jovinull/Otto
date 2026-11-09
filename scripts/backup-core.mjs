@@ -19,6 +19,7 @@ export const KEY_TABLES = [
   'budgets',
   'financial_goals',
   'goal_contributions',
+  'balance_reconciliations',
   'recurring_entries',
   'audit_events',
 ];

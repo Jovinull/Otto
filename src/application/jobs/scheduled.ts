@@ -1,8 +1,10 @@
-import { and, eq, inArray, lt, or } from 'drizzle-orm';
+import { and, eq, gt, gte, inArray, lt, lte, or, sql } from 'drizzle-orm';
 import { newThresholds } from '../../domain/budgets/budget';
 import type { Stmt } from '../../infrastructure/database/client';
 import { commitAtomically } from '../../infrastructure/database/client';
 import {
+  balanceReconciliations,
+  financialTransactions,
   households,
   incomingEvents,
   outgoingMessages,
@@ -33,6 +35,7 @@ import { deliverDueMessages, dueDeliveriesQuery } from './outbox';
 import { canStartEvent, hasBudget } from '../../infrastructure/database/metered';
 
 const DAILY_HOUR = 9;
+const SWEEP_HOURS = 3;
 const WEEKLY_HOUR = 8;
 const DAY_MS = 86_400_000;
 const RETENTION_MS = 90 * DAY_MS;
@@ -149,8 +152,13 @@ async function budgetSweep(deps: Deps, scope: Scope, clock: LocalClock): Promise
   return statements;
 }
 
+/** No domingo a semana que esta acabando ja conta; nos outros dias, a ultima semana inteira. */
+function reportedWeek(clock: LocalClock) {
+  return weekRange(clock.weekday === 0 ? clock.date : addDays(clock.date, -7));
+}
+
 async function weeklySummary(deps: Deps, scope: Scope, clock: LocalClock): Promise<Stmt[]> {
-  const previousWeek = weekRange(addDays(clock.date, -7));
+  const previousWeek = reportedWeek(clock);
   const flow = await cashFlow(deps.db, scope.household.id, previousWeek);
   if (flow.expenseCents === 0 && flow.incomeCents === 0) return [];
   const text = await weekReport(deps, scope, previousWeek.from);
@@ -182,16 +190,15 @@ async function monthlyClosing(deps: Deps, scope: Scope, clock: LocalClock): Prom
     range,
     monthRange(addMonths(previous, -1)),
   );
-  const goal = (await loadGoals(deps.db, scope.household.id, range.to)).find(
-    (g) => g.kind === 'apartment',
-  );
-  const planned = goal?.progress.plannedMonthlyCents;
-  if (goal && planned) {
+  const goals = await loadGoals(deps.db, scope.household.id, range.to);
+  for (const goal of goals) {
+    const planned = goal.progress.plannedMonthlyCents;
+    if (!planned) continue;
     const saved = goal.progress.confirmedThisMonthCents;
     observations.push(
       saved > 0
-        ? `Apartamento: guardaram ${formatBRL(saved)} de ${formatBRL(planned)} pretendidos.`
-        : `Apartamento: nenhum aporte registrado no mês (pretendido ${formatBRL(planned)}). Se guardaram, registrem com /aporte.`,
+        ? `${goal.name}: guardaram ${formatBRL(saved)} de ${formatBRL(planned)} pretendidos.`
+        : `${goal.name}: nenhum aporte registrado no mês (pretendido ${formatBRL(planned)}). Se guardaram, registrem com /aporte.`,
     );
   }
   return [
@@ -209,6 +216,182 @@ async function goalFollowUp(deps: Deps, scope: Scope, clock: LocalClock): Promis
   if (!goals.some((g) => g.progress.targetCents !== null)) return [];
   const text = await goalReport(deps, scope, clock.date);
   return [enqueue(deps, scope, `goal:${scope.household.id}:${periodOf(clock.date)}`, text)];
+}
+
+/** Perto do fim do mes, compara o que foi guardado com o que se pretendia guardar. */
+async function goalGapAlert(deps: Deps, scope: Scope, clock: LocalClock): Promise<Stmt[]> {
+  const goals = (await loadGoals(deps.db, scope.household.id, clock.date)).filter(
+    (g) => (g.progress.plannedMonthlyCents ?? 0) > 0 && (g.progress.remainingCents ?? 1) > 0,
+  );
+  if (goals.length === 0) return [];
+  const lines = goals.map((goal) => {
+    const planned = goal.progress.plannedMonthlyCents!;
+    const saved = goal.progress.confirmedThisMonthCents;
+    return saved >= planned
+      ? `• ${goal.name}: ${formatBRL(saved)} guardados, meta do mês batida. 👏`
+      : `• ${goal.name}: ${formatBRL(saved)} de ${formatBRL(planned)} neste mês; faltam ${formatBRL(planned - saved)}.`;
+  });
+  return [
+    enqueue(
+      deps,
+      scope,
+      `goal-gap:${scope.household.id}:${periodOf(clock.date)}`,
+      ['🎯 Como estão as metas do mês:', ...lines, 'Guardou e não anotou? Use /aporte.'].join('\n'),
+    ),
+  ];
+}
+
+const RECONCILIATION_WINDOW_MS = 30 * DAY_MS;
+
+async function reconciliationReminder(
+  deps: Deps,
+  scope: Scope,
+  clock: LocalClock,
+): Promise<Stmt[]> {
+  const rows = await deps.db
+    .select({ accountId: balanceReconciliations.accountId })
+    .from(balanceReconciliations)
+    .where(
+      and(
+        eq(balanceReconciliations.householdId, scope.household.id),
+        eq(balanceReconciliations.status, 'pending'),
+        gt(balanceReconciliations.createdAt, deps.now() - RECONCILIATION_WINDOW_MS),
+      ),
+    );
+  const names = [...new Set(rows.map((r) => r.accountId))]
+    .map((id) => scope.accounts.find((a) => a.id === id)?.name)
+    .filter(Boolean);
+  if (names.length === 0) return [];
+  return [
+    enqueue(
+      deps,
+      scope,
+      `reconcile:${scope.household.id}:${weekRange(clock.date).from}`,
+      `🔎 Saldo divergente sem decisão: ${names.join(', ')}. Confira com /saldo CONTA VALOR.`,
+    ),
+  ];
+}
+
+const TREND_MIN_MONTHS = 3;
+const TREND_MIN_DAY = 8;
+const TREND_MIN_DELTA_CENTS = 5_000;
+const EXCEPTIONAL_MIN_CENTS = 20_000;
+const EXCEPTIONAL_MIN_HISTORY = 5;
+const MAX_INSIGHT_LINES = 3;
+
+/**
+ * Observacoes semanais com numeros calculados aqui, sem IA. Tendencia so com historico de
+ * pelo menos tres meses, para nao tirar conclusao de pouco dado. A soma fica no banco para
+ * caber no limite de CPU.
+ */
+async function spendingInsights(deps: Deps, scope: Scope, clock: LocalClock): Promise<Stmt[]> {
+  const period = periodOf(clock.date);
+  const months = [1, 2, 3].map((n) => addMonths(period, -n));
+  const lastWeek = reportedWeek(clock);
+  const tx = financialTransactions;
+  const expenses = and(
+    eq(tx.householdId, scope.household.id),
+    eq(tx.status, 'confirmed'),
+    eq(tx.type, 'expense'),
+  );
+  const month = sql<string>`substr(${tx.financialDate}, 1, 7)`;
+  const [totals, large] = await deps.db.batch([
+    deps.db
+      .select({
+        categoryId: tx.categoryId,
+        period: month,
+        cents: sql<number>`sum(${tx.amountCents})`,
+        count: sql<number>`count(*)`,
+      })
+      .from(tx)
+      .where(
+        and(
+          expenses,
+          gte(tx.financialDate, monthRange(months[2]!).from),
+          lte(tx.financialDate, clock.date),
+        ),
+      )
+      .groupBy(tx.categoryId, month),
+    deps.db
+      .select({
+        categoryId: tx.categoryId,
+        amountCents: tx.amountCents,
+        description: tx.description,
+      })
+      .from(tx)
+      .where(
+        and(
+          expenses,
+          gte(tx.financialDate, lastWeek.from),
+          lte(tx.financialDate, lastWeek.to),
+          gte(tx.amountCents, EXCEPTIONAL_MIN_CENTS),
+        ),
+      ),
+  ]);
+  const withData = new Set(totals.map((r) => r.period));
+  if (months.some((m) => !withData.has(m)) || months.length < TREND_MIN_MONTHS) return [];
+
+  const categoryName = (id: string | null) =>
+    scope.categories.find((c) => c.id === id)?.name ?? 'Sem categoria';
+  const day = Number(clock.date.slice(8));
+  const daysInMonth = Number(monthRange(period).to.slice(8));
+  const up: string[] = [];
+  const down: string[] = [];
+  if (day >= TREND_MIN_DAY) {
+    for (const categoryId of new Set(totals.map((r) => r.categoryId))) {
+      const inCategory = totals.filter((r) => r.categoryId === categoryId);
+      const history = inCategory
+        .filter((r) => r.period !== period)
+        .reduce((sum, r) => sum + r.cents, 0);
+      const current = inCategory
+        .filter((r) => r.period === period)
+        .reduce((sum, r) => sum + r.cents, 0);
+      const usual = Math.round(((history / months.length) * day) / daysInMonth);
+      if (current >= Math.round(usual * 1.3) && current - usual >= TREND_MIN_DELTA_CENTS) {
+        up.push(
+          `• ${categoryName(categoryId)}: ${formatBRL(current)} até agora; o ritmo usual seria ${formatBRL(usual)}.`,
+        );
+      } else if (
+        usual > 0 &&
+        current <= Math.round(usual * 0.7) &&
+        usual - current >= TREND_MIN_DELTA_CENTS
+      ) {
+        down.push(
+          `• ${categoryName(categoryId)}: ${formatBRL(current)} até agora, abaixo dos ${formatBRL(usual)} de costume. Boa! 👏`,
+        );
+      }
+    }
+  }
+
+  const exceptional: string[] = [];
+  for (const row of large) {
+    const inCategory = totals.filter((r) => r.categoryId === row.categoryId);
+    const count = inCategory.reduce((sum, r) => sum + r.count, 0) - 1;
+    if (count < EXCEPTIONAL_MIN_HISTORY) continue;
+    const average = (inCategory.reduce((sum, r) => sum + r.cents, 0) - row.amountCents) / count;
+    if (row.amountCents >= average * 3) {
+      exceptional.push(
+        `• ${row.description}: ${formatBRL(row.amountCents)}, bem acima da média de ${formatBRL(Math.round(average))} em ${categoryName(row.categoryId)}.`,
+      );
+    }
+  }
+
+  const blocks = [
+    up.length ? ['Acima do costume neste mês:', ...up.slice(0, MAX_INSIGHT_LINES)] : [],
+    exceptional.length
+      ? ['Fora do padrão na semana passada:', ...exceptional.slice(0, MAX_INSIGHT_LINES)]
+      : [],
+    down.length ? ['Abaixo do costume:', ...down.slice(0, MAX_INSIGHT_LINES)] : [],
+  ].flat();
+  if (blocks.length === 0) return [];
+  return [
+    enqueue(
+      deps,
+      scope,
+      `insights:${scope.household.id}:${weekRange(clock.date).from}`,
+      ['💡 Para olhar com calma:', ...blocks, 'São comparações com os últimos 3 meses.'].join('\n'),
+    ),
+  ];
 }
 
 /** Decide o que enviar com base no relogio local. As chaves de dedup impedem repeticao. */
@@ -231,14 +414,24 @@ export async function proactiveStatements(
     if (dayOfMonth === 15 && notifications.goalFollowUp) {
       statements.push(...(await goalFollowUp(deps, scope, clock)));
     }
+    // Consultas mais pesadas rodam so nas primeiras horas: cada uma so precisa dar certo uma vez.
+    if (
+      dayOfMonth >= scope.settings.goalFollowUpDay &&
+      notifications.goalFollowUp &&
+      clock.hour < DAILY_HOUR + SWEEP_HOURS
+    ) {
+      statements.push(...(await goalGapAlert(deps, scope, clock)));
+    }
   }
-  if (
-    clock.weekday === 1 &&
-    clock.hour >= WEEKLY_HOUR &&
-    clock.hour < 21 &&
-    notifications.weeklySummary
-  ) {
+  const isWeeklyDay = clock.weekday === scope.settings.weeklyWeekday;
+  if (isWeeklyDay && clock.hour >= WEEKLY_HOUR && clock.hour < 21 && notifications.weeklySummary) {
     statements.push(...(await weeklySummary(deps, scope, clock)));
+  }
+  if (isWeeklyDay && clock.hour >= WEEKLY_HOUR && clock.hour < WEEKLY_HOUR + SWEEP_HOURS) {
+    statements.push(...(await reconciliationReminder(deps, scope, clock)));
+    if (notifications.behavioralTips) {
+      statements.push(...(await spendingInsights(deps, scope, clock)));
+    }
   }
   return statements;
 }

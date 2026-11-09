@@ -8,6 +8,8 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: './wrangler.jsonc' },
         miniflare: {
+          // Banco separado para testar migracoes sobre dados no formato antigo.
+          d1Databases: ['MIGRATION_DB'],
           bindings: {
             TEST_MIGRATIONS: migrations,
             TELEGRAM_WEBHOOK_SECRET: 'test-webhook-secret',
@@ -19,6 +21,8 @@ export default defineConfig(async () => {
     test: {
       setupFiles: ['./tests/setup.ts'],
       include: ['tests/**/*.test.ts'],
+      // Cadastros guiados inteiros passam de 5 s com a maquina ocupada.
+      testTimeout: 20_000,
     },
   };
 });

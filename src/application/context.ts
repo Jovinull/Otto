@@ -153,11 +153,15 @@ export function ledgerContext(actor: Actor): LedgerContext {
   return {
     members: scope.members
       .filter((m) => m.status === 'active')
-      .map((m) => ({
-        id: m.id,
-        name: m.name,
-        defaultAccountId: parseMemberPreferences(m.preferences).defaultAccountId,
-      })),
+      .map((m) => {
+        const preferences = parseMemberPreferences(m.preferences);
+        return {
+          id: m.id,
+          name: m.name,
+          defaultAccountId: preferences.defaultAccountId,
+          defaultCardId: preferences.defaultCardId,
+        };
+      }),
     accounts: scope.accounts,
     categories: scope.categories,
     senderMemberId: actor.member.id,

@@ -1,14 +1,17 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { computeBudgetStatus, newThresholds } from '../../domain/budgets/budget';
 import type { ScheduleType } from '../../domain/finance/recurring';
 import type { AccountKind } from '../../domain/finance/transactions';
+import { accountIdentityKey } from '../../domain/finance/transactions';
 import type { Stmt } from '../../infrastructure/database/client';
 import {
+  financialTransactions,
   budgets,
   categories,
   financialAccounts,
   financialGoals,
   goalContributions,
+  householdMembers,
   installmentPlans,
   installments,
   recurringEntries,
@@ -22,13 +25,12 @@ import {
   monthName,
   monthRange,
   periodOf,
-  resolveDateExpression,
 } from '../../shared/dates';
 import { formatBRL, parseBRL } from '../../shared/money';
 import { normalizeText } from '../../shared/text';
 import type { Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
-import { loadBudgetViews, loadGoals, shortId, sumExpenses } from '../queries/finance';
+import { loadBudgetViews, shortId, sumExpenses } from '../queries/finance';
 import {
   alertStatementsFor,
   createPendingStatement,
@@ -149,6 +151,8 @@ export async function setBudget(
 }
 
 export interface GoalFields {
+  /** Conta ou cofre onde o dinheiro da meta fica. */
+  linkedAccountId?: string | null;
   entry?: string | null;
   additionalCosts?: string | null;
   deadline?: string | null;
@@ -175,7 +179,7 @@ async function apartmentGoal(deps: Deps, householdId: string) {
   return rows[0] ?? null;
 }
 
-function parseDeadline(value: string, today: LocalDate): LocalDate | null {
+export function parseDeadline(value: string, today: LocalDate): LocalDate | null {
   const monthYear = /^(\d{1,2})[/-](\d{4})$/.exec(value.trim());
   if (monthYear) {
     const month = Number(monthYear[1]);
@@ -226,6 +230,7 @@ export async function updateApartmentGoal(
   if (deadline === null) return replyOnly('Prazo inválido. Use MM/AAAA, por exemplo 12/2027.');
 
   const changes = {
+    ...(fields.linkedAccountId ? { linkedAccountId: fields.linkedAccountId } : {}),
     ...(entryCents !== undefined && { entryCents: entryCents as number }),
     ...(additionalCostsCents !== undefined && {
       additionalCostsCents: additionalCostsCents as number,
@@ -258,6 +263,7 @@ export async function updateApartmentGoal(
         id: goalId,
         householdId,
         name: APARTMENT_GOAL_NAME,
+        normalizedName: normalizeText(APARTMENT_GOAL_NAME),
         kind: 'apartment',
         ...changes,
         createdAt: now,
@@ -290,6 +296,7 @@ export async function updateApartmentGoal(
         amountCents: initialCents as number,
         direction: 'in',
         kind: 'initial',
+        accountId: fields.linkedAccountId ?? null,
         contributionDate: actor.today,
         memberId: actor.member.id,
         idempotencyKey: `${actor.eventId}:initial`,
@@ -316,80 +323,13 @@ export async function updateApartmentGoal(
   return { statements, replies: [{ text: lines.join('\n') }] };
 }
 
-export async function addGoalContribution(
-  deps: Deps,
-  actor: Actor,
-  amountText: string,
-  direction: 'in' | 'out',
-  dateText: string | null,
-  idempotencyPrefix: string,
-): Promise<Effect> {
-  const parsed = parseBRL(amountText);
-  if (parsed.status !== 'ok') return replyOnly('Não entendi o valor do aporte. Exemplo: 500,00.');
-  const date = resolveDateExpression(dateText ?? '', actor.today);
-  if (date.status !== 'ok') return replyOnly('Data inválida. Exemplo: 03/11.');
-
-  const goal = await apartmentGoal(deps, actor.scope.household.id);
-  if (!goal)
-    return replyOnly('A meta do apartamento ainda não foi criada. Comece com /meta entrada=VALOR.');
-
-  const contributionId = deps.newId();
-  const statements: Stmt[] = [
-    deps.db.insert(goalContributions).values({
-      id: contributionId,
-      householdId: actor.scope.household.id,
-      goalId: goal.id,
-      amountCents: parsed.cents,
-      direction,
-      kind: 'contribution',
-      contributionDate: date.date,
-      memberId: actor.member.id,
-      idempotencyKey: `${idempotencyPrefix}:goal`,
-      createdAt: deps.now(),
-    }),
-    auditStatement(deps, actor, 'goal_contribution.created', 'goal_contribution', contributionId, {
-      after: { amountCents: parsed.cents, direction },
-    }),
-  ];
-  const verb = direction === 'in' ? 'Aporte confirmado' : 'Retirada confirmada';
-  const [view] = (await loadGoals(deps.db, actor.scope.household.id, actor.today)).filter(
-    (g) => g.id === goal.id,
-  );
-  const lines = [
-    `${verb}: ${formatBRL(parsed.cents)} na meta ${goal.name} (${formatDate(date.date)}).`,
-  ];
-  if (view) {
-    const signed = direction === 'in' ? parsed.cents : -parsed.cents;
-    const saved = view.progress.confirmedCents + signed;
-    const target = view.progress.targetCents;
-    lines.push(
-      target
-        ? `Agora são ${formatBRL(saved)} de ${formatBRL(target)} (${Math.min(Math.floor((Math.max(saved, 0) * 100) / target), 100)}%).`
-        : `Agora são ${formatBRL(saved)} guardados. Defina o alvo com /meta entrada=VALOR.`,
-    );
-    const planned = view.progress.plannedMonthlyCents;
-    const month =
-      view.progress.confirmedThisMonthCents +
-      (periodOf(date.date) === periodOf(actor.today) ? signed : 0);
-    if (planned && direction === 'in') {
-      lines.push(
-        month >= planned
-          ? `Meta do mês batida: ${formatBRL(month)} de ${formatBRL(planned)} pretendidos. 👏`
-          : `No mês: ${formatBRL(month)} de ${formatBRL(planned)} pretendidos.`,
-      );
-    }
-  }
-  lines.push(`Desfazer: /desfazer_aporte ${shortId(contributionId)}`);
-  return { statements, replies: [{ text: lines.join('\n') }] };
-}
-
 export async function requestContributionVoid(
   deps: Deps,
   actor: Actor,
   reference: string,
 ): Promise<Effect> {
   const code = reference.replace(/^#/, '').toLowerCase();
-  if (!/^[0-9a-f]{4,36}$/.test(code)) return replyOnly('Código inválido.');
+  if (!/^[0-9a-f]{4,36}$/.test(code)) return replyOnly('Não encontrei esse código. Veja /ultimos.');
   const rows = await deps.db
     .select()
     .from(goalContributions)
@@ -401,7 +341,7 @@ export async function requestContributionVoid(
     )
     .orderBy(desc(goalContributions.createdAt));
   const matches = rows.filter((r) => shortId(r.id).startsWith(code.slice(0, 6)));
-  if (matches.length !== 1) return replyOnly('Aporte não encontrado.');
+  if (matches.length !== 1) return replyOnly('Não encontrei esse código. Veja /ultimos.');
   const pendingId = deps.newId();
   return {
     statements: [
@@ -427,6 +367,10 @@ export interface CommitmentInput {
   scheduleValue: number | null;
   personText: string | null;
   categoryText: string | null;
+  /** Conta onde a renda costuma cair. */
+  accountId?: string | null;
+  /** irregular: fonte cadastrada, fora da renda prevista do mes. */
+  frequency?: 'monthly' | 'irregular';
 }
 
 export function normalizedRecurringName(description: string): string {
@@ -485,6 +429,8 @@ export async function addCommitment(
     scheduleType: input.scheduleType,
     scheduleValue: input.scheduleValue,
     categoryId: category?.id ?? existing?.categoryId ?? null,
+    accountId: input.accountId ?? existing?.accountId ?? null,
+    frequency: input.frequency ?? existing?.frequency ?? ('monthly' as const),
   };
   const id = existing?.id ?? deps.newId();
   const statements: Stmt[] = [
@@ -539,71 +485,150 @@ export async function addCommitment(
 }
 
 export interface NewAccount {
+  /** Definido por quem precisa referenciar a conta na mesma transacao. */
+  id?: string;
   kind: AccountKind;
   name: string;
   openingText: string | null;
   isDefault: boolean;
   closingDay: number | null;
   dueDay: number | null;
+  /** Nome da pessoa ou "casal". Vazio: de quem enviou (conjunta: do casal). */
   ownerText: string | null;
+  institution?: string | null;
+  description?: string | null;
+  sharedFallback?: boolean;
+  limitText?: string | null;
+  availableText?: string | null;
+  debtText?: string | null;
+}
+
+const SHARED_OWNER_WORDS = new Set(['casal', 'nos', 'nosso', 'nossa', 'compartilhada', 'conjunta']);
+
+export function resolveOwnership(
+  actor: Actor,
+  ownerText: string | null,
+  kind: AccountKind,
+):
+  | { ownership: 'member' | 'shared'; ownerMemberId: string | null; ownerName: string }
+  | { error: string } {
+  if (!ownerText) {
+    return kind === 'joint'
+      ? { ownership: 'shared', ownerMemberId: null, ownerName: 'casal' }
+      : { ownership: 'member', ownerMemberId: actor.member.id, ownerName: actor.member.name };
+  }
+  if (SHARED_OWNER_WORDS.has(normalizeText(ownerText))) {
+    return { ownership: 'shared', ownerMemberId: null, ownerName: 'casal' };
+  }
+  const owner = findMember(actor, ownerText);
+  if (!owner) return { error: `Não encontrei "${ownerText}" no cadastro.` };
+  return { ownership: 'member', ownerMemberId: owner.id, ownerName: owner.name };
+}
+
+/** Grava so a chave alterada: duas mudancas no mesmo lote nao se sobrescrevem. */
+export function setMemberDefaultStatement(
+  deps: Deps,
+  memberId: string,
+  key: 'defaultAccountId' | 'defaultCardId',
+  accountId: string,
+): Stmt {
+  return deps.db
+    .update(householdMembers)
+    .set({
+      preferences: sql`json_set(${householdMembers.preferences}, ${`$.${key}`}, ${accountId})`,
+    })
+    .where(eq(householdMembers.id, memberId));
 }
 
 export async function addAccount(deps: Deps, actor: Actor, input: NewAccount): Promise<Effect> {
   const normalizedName = normalizeText(input.name);
   if (!normalizedName) return replyOnly('Informe o nome da conta.');
-  if (actor.scope.accounts.some((a) => a.normalizedName === normalizedName)) {
-    return replyOnly('Já existe uma conta com esse nome.');
+  const owner = resolveOwnership(actor, input.ownerText, input.kind);
+  if ('error' in owner) return replyOnly(owner.error);
+  const identityKey = accountIdentityKey(
+    owner.ownership,
+    owner.ownerMemberId,
+    input.kind,
+    normalizedName,
+  );
+  if (actor.scope.accounts.some((a) => a.identityKey === identityKey)) {
+    return replyOnly(`${owner.ownerName} já tem uma conta com esse nome.`);
   }
-  let opening: number | null = null;
-  if (input.openingText !== null && /^0+(,0{1,2})?$/.test(input.openingText.trim())) {
-    // Conta zerada e um saldo conhecido, diferente de saldo desconhecido.
-    opening = 0;
-  } else if (input.openingText !== null) {
-    const parsed = parseBRL(input.openingText);
-    if (parsed.status !== 'ok') return replyOnly('Saldo inicial inválido. Exemplo: saldo=1200,50');
-    opening = parsed.cents;
+
+  const money = (text: string | null | undefined): number | null | 'invalid' => {
+    if (text === null || text === undefined) return null;
+    if (/^0+(,0{1,2})?$/.test(text.trim())) return 0;
+    const parsed = parseBRL(text);
+    return parsed.status === 'ok' ? parsed.cents : 'invalid';
+  };
+  let opening = money(input.openingText);
+  if (opening === 'invalid') return replyOnly('Saldo inicial inválido. Exemplo: saldo=1200,50');
+  const isCard = input.kind === 'credit_card';
+  if (isCard && opening !== null) {
+    return replyOnly('Cartão não tem saldo inicial. Se já houver dívida, use divida=VALOR.');
   }
-  if (input.kind === 'credit_card' && opening !== null) {
-    return replyOnly('Cartão não tem saldo inicial. Registre compras e pagamentos normalmente.');
+  const debt = money(input.debtText);
+  const limit = money(input.limitText);
+  const available = money(input.availableText);
+  if (debt === 'invalid' || limit === 'invalid' || available === 'invalid') {
+    return replyOnly('Valor inválido. Exemplo: limite=5000 divida=320,50');
   }
-  const owner = findMember(actor, input.ownerText);
-  if (input.ownerText && !owner)
-    return replyOnly(`Não encontrei "${input.ownerText}" no cadastro.`);
+  if (!isCard && (debt !== null || limit !== null || available !== null)) {
+    return replyOnly('Limite e dívida só valem para cartão.');
+  }
+  if (isCard && debt !== null) opening = -debt;
 
   const householdId = actor.scope.household.id;
-  const id = deps.newId();
-  const statements: Stmt[] = [];
-  if (input.isDefault) {
-    statements.push(
-      deps.db
-        .update(financialAccounts)
-        .set({ isDefault: false })
-        .where(eq(financialAccounts.householdId, householdId)),
-    );
-  }
-  statements.push(
+  const id = input.id ?? deps.newId();
+  const statements: Stmt[] = [
     deps.db.insert(financialAccounts).values({
       id,
       householdId,
       name: input.name,
       normalizedName,
       kind: input.kind,
-      ownerMemberId: owner?.id ?? null,
+      ownerMemberId: owner.ownerMemberId,
+      ownership: owner.ownership,
+      institution: input.institution ?? null,
+      description: input.description ?? null,
       openingBalanceCents: opening,
-      isDefault: input.isDefault,
+      openingBalanceDate: opening === null ? null : actor.today,
+      sharedFallback: owner.ownership === 'shared' && (input.sharedFallback ?? false),
       creditClosingDay: input.closingDay,
       creditDueDay: input.dueDay,
+      creditLimitCents: limit,
+      creditAvailableCents: available,
+      creditAvailableDate: available === null ? null : actor.today,
+      identityKey,
       createdAt: deps.now(),
     }),
-    auditStatement(deps, actor, 'account.created', 'account', id, { after: { kind: input.kind } }),
-  );
-  const balance =
-    input.kind === 'credit_card'
-      ? ''
-      : opening === null
-        ? ' Saldo inicial não informado: mostro só o movimentado aqui, nunca um saldo real.'
-        : ` Saldo inicial: ${formatBRL(opening)}.`;
-  return { statements, replies: [{ text: `Conta criada: ${input.name}.${balance}` }] };
+    auditStatement(deps, actor, 'account.created', 'account', id, {
+      after: { kind: input.kind, ownership: owner.ownership, ownerMemberId: owner.ownerMemberId },
+    }),
+  ];
+  if (input.isDefault && input.kind !== 'reserve') {
+    statements.push(
+      setMemberDefaultStatement(
+        deps,
+        owner.ownerMemberId ?? actor.member.id,
+        isCard ? 'defaultCardId' : 'defaultAccountId',
+        id,
+      ),
+    );
+  }
+  const balance = isCard
+    ? debt
+      ? ` Dívida informada: ${formatBRL(debt)}.`
+      : ''
+    : opening === null
+      ? ' Saldo inicial não informado: mostro só o movimentado aqui, nunca um saldo real.'
+      : ` Saldo inicial: ${formatBRL(opening)} em ${formatDate(actor.today)}.`;
+  const label = isCard ? 'Cartão criado' : 'Conta criada';
+  const padrao = input.isDefault && input.kind !== 'reserve' ? ' É a padrão.' : '';
+  return {
+    statements,
+    replies: [{ text: `${label}: ${input.name} (${owner.ownerName}).${balance}${padrao}` }],
+  };
 }
 
 export function addCategory(
@@ -700,6 +725,17 @@ export async function markNextInstallmentPaid(
 ): Promise<Effect> {
   const plan = await findPlan(deps, actor, reference);
   if (!plan) return replyOnly('Parcelamento não encontrado. Veja /parcelas.');
+  const purchase = await deps.db
+    .select({ cardId: financialTransactions.sourceAccountId })
+    .from(financialTransactions)
+    .where(eq(financialTransactions.id, plan.transactionId))
+    .limit(1);
+  const card = actor.scope.accounts.find((a) => a.id === purchase[0]?.cardId);
+  if (card && card.creditClosingDay !== null && card.creditDueDay !== null) {
+    return replyOnly(
+      `As parcelas de ${card.name} são quitadas pelo pagamento das faturas, para não contar o mesmo dinheiro duas vezes. Use /pagar_fatura VALOR Conta para ${card.name}.`,
+    );
+  }
   const rows = await deps.db
     .select()
     .from(installments)

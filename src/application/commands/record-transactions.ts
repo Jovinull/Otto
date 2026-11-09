@@ -6,7 +6,12 @@ import type {
   Slot,
   TransactionDraft,
 } from '../../domain/finance/transactions';
-import { resolveDraft } from '../../domain/finance/transactions';
+import {
+  defaultCreditCard,
+  isBareCardHint,
+  matchAccount,
+  resolveDraft,
+} from '../../domain/finance/transactions';
 import { cycleForInstallment } from '../../domain/finance/card-cycle';
 import { cardDays } from '../queries/cards';
 import type { Stmt } from '../../infrastructure/database/client';
@@ -24,7 +29,11 @@ import { formatBRL, splitInstallments } from '../../shared/money';
 import type { Actor, Deps, Effect, Reply } from '../context';
 import { ledgerContext, replyOnly } from '../context';
 import type { BudgetView, ExtraExpense } from '../queries/finance';
-import { loadBudgetViews, shortId } from '../queries/finance';
+import { accountBalances, loadBudgetViews, shortId } from '../queries/finance';
+import { cardStatement } from '../queries/cards';
+import { reservedShortfall } from './goals';
+import type { Account } from '../context';
+import { prepareIncomeDrafts } from './income';
 import {
   budgetNudge,
   incomeOpener,
@@ -33,6 +42,8 @@ import {
   transferOpener,
 } from '../services/tone';
 import { auditStatement } from './shared';
+
+import type { GoalMovement } from './goals';
 
 export const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 /** Lancamento igual da outra pessoa nessa janela sugere que os dois registraram a mesma compra. */
@@ -70,6 +81,10 @@ export type PendingPayload =
     }
   | { type: 'void_contribution'; contributionId: string }
   | { type: 'archive_account'; accountId: string }
+  | { type: 'archive_goal'; goalId: string }
+  | { type: 'reconcile'; reconciliationId: string }
+  | { type: 'goal_location'; movement: GoalMovement; linkedAccountId?: string | null }
+  | { type: 'goal_move'; movement: GoalMovement }
   | { type: 'onboarding'; step: string }
   | { type: 'onboarding_confirm' };
 
@@ -115,7 +130,7 @@ function describeDraft(draft: TransactionDraft): string {
   return `${value} — ${draft.description}`;
 }
 
-function statementsForTransaction(
+export function statementsForTransaction(
   deps: Deps,
   actor: Actor,
   transaction: ResolvedTransaction,
@@ -228,7 +243,7 @@ function transactionLine(actor: Actor, transaction: ResolvedTransaction, id: str
 }
 
 /** Soma dos lancamentos confirmados do mes que correspondem a recorrencia. */
-async function matchedAmountInPeriod(
+export async function matchedAmountInPeriod(
   deps: Deps,
   actor: Actor,
   entry: typeof recurringEntries.$inferSelect,
@@ -440,14 +455,117 @@ async function budgetFollowUp(
  * Caminho unico de registro. Aplica as regras financeiras e devolve as gravacoes;
  * o chamador as confirma junto com a resposta, em uma so transacao do D1.
  */
-export async function recordDrafts(
+/** O cartao que um pagamento sem valor quer quitar, quando nao ha duvida. */
+function paymentCard(actor: Actor, draft: TransactionDraft): Account | null {
+  const context = ledgerContext(actor);
+  const cards = actor.scope.accounts.filter((a) => a.kind === 'credit_card');
+  const direct = cards.find((c) => c.id === draft.destinationAccountId);
+  if (direct) return direct;
+  const member = context.members.find((m) => m.id === actor.member.id);
+  const hint = isBareCardHint(draft.destinationAccountText) ? null : draft.destinationAccountText;
+  const match = matchAccount(hint, context.accounts, { memberId: actor.member.id, only: 'card' });
+  const id =
+    match.status === 'found'
+      ? match.account.id
+      : match.status === 'no_hint' && member
+        ? (() => {
+            const fallback = defaultCreditCard(member, context.accounts);
+            return fallback.status === 'found' ? fallback.account.id : null;
+          })()
+        : null;
+  return cards.find((c) => c.id === id) ?? null;
+}
+
+/** "A fatura foi paga": mostra o valor em aberto e so registra depois da resposta. */
+async function askInvoiceAmount(
   deps: Deps,
   actor: Actor,
   drafts: TransactionDraft[],
   options: RecordOptions,
+): Promise<Effect | null> {
+  const index = drafts.findIndex(
+    (d) => d.kind === 'card_payment' && d.amountText === null && d.amountCents === undefined,
+  );
+  if (index < 0 || options.origin === 'confirmation') return null;
+  const card = paymentCard(actor, drafts[index]!);
+  if (!card) return null;
+  const statement = await cardStatement(deps.db, actor.scope, card, actor.today);
+  if (!statement) return null;
+  const open = statement.invoices.filter((i) => i.status !== 'future' && i.remainingCents > 0);
+  const total = open.reduce((sum, i) => sum + i.remainingCents, 0);
+  if (total === 0) {
+    return replyOnly(`${card.name} não tem fatura em aberto. Veja /faturas ${card.name}.`);
+  }
+  const pendingId = deps.newId();
+  return {
+    statements: [
+      ...(options.extraStatements ?? []),
+      createPendingStatement(deps, actor, pendingId, {
+        type: 'fill_slot',
+        drafts: freezeDrafts(drafts, actor.today),
+        index,
+        slot: 'amount',
+        origin: options.origin,
+        candidateCents: total,
+      }),
+    ],
+    replies: [
+      {
+        text: `${card.name}: ${formatBRL(total)} em aberto, vencimento em ${formatShortDate(open[0]!.dueDate)}. Foi o total? Responda "sim" ou o valor pago.`,
+      },
+    ],
+  };
+}
+
+/** Situacao da fatura depois do pagamento, para o usuario saber se quitou. */
+async function paymentNotes(
+  deps: Deps,
+  actor: Actor,
+  items: readonly { transaction: ResolvedTransaction }[],
+): Promise<string[]> {
+  const notes: string[] = [];
+  for (const { transaction } of items) {
+    if (transaction.transferKind !== 'card_payment') continue;
+    const card = actor.scope.accounts.find((a) => a.id === transaction.destinationAccountId);
+    if (!card) continue;
+    const statement = await cardStatement(deps.db, actor.scope, card, actor.today);
+    if (!statement) continue;
+    const open = statement.invoices
+      .filter((i) => i.status !== 'future')
+      .reduce((sum, i) => sum + i.remainingCents, 0);
+    const debt = statement.invoices.reduce((sum, i) => sum + i.remainingCents, 0);
+    const left = open - transaction.amountCents;
+    if (open === 0 && debt > 0) {
+      notes.push(`${card.name} não tinha fatura a pagar: o valor adianta as próximas parcelas.`);
+    } else if (open === 0) {
+      notes.push(`${card.name} não tinha dívida: o valor fica como crédito.`);
+    } else if (left > 0) {
+      notes.push(`Pagamento parcial: ainda faltam ${formatBRL(left)} em ${card.name}.`);
+    } else {
+      notes.push(`Fatura de ${card.name} quitada ✅`);
+    }
+  }
+  return notes;
+}
+
+export async function recordDrafts(
+  deps: Deps,
+  actor: Actor,
+  received: TransactionDraft[],
+  options: RecordOptions,
 ): Promise<Effect> {
   const context = ledgerContext(actor);
   const resolved: ResolvedTransaction[] = [];
+  const reservedNotes: string[] = [];
+
+  const income =
+    options.origin !== 'confirmation' && received.some((d) => d.kind === 'income')
+      ? await prepareIncomeDrafts(deps, actor, received)
+      : null;
+  if (income?.stop) return income.stop;
+  const drafts = income?.drafts ?? received;
+  const invoiceQuestion = await askInvoiceAmount(deps, actor, drafts, options);
+  if (invoiceQuestion) return invoiceQuestion;
 
   for (let index = 0; index < drafts.length; index++) {
     const outcome = resolveDraft(drafts[index]!, context);
@@ -482,7 +600,30 @@ export async function recordDrafts(
     resolved.push(outcome.transaction);
   }
 
-  let confirmationReason = options.confirmationReason ?? null;
+  let confirmationReason = options.confirmationReason ?? income?.reason ?? null;
+  const spendingAccounts = resolved.filter(
+    (t) => t.sourceAccountId !== null && !t.isCreditPurchase,
+  );
+  if (spendingAccounts.length > 0) {
+    const positions = await accountBalances(deps.db, actor.scope);
+    const needed = new Map<string, number>();
+    for (const t of spendingAccounts) {
+      needed.set(t.sourceAccountId!, (needed.get(t.sourceAccountId!) ?? 0) + t.amountCents);
+    }
+    for (const [accountId, amount] of needed) {
+      const position = positions.find((p) => p.id === accountId);
+      const shortfall = position ? reservedShortfall(position, amount) : null;
+      if (!position || shortfall === null) continue;
+      if (options.origin === 'confirmation') {
+        reservedNotes.push(
+          `${position.name}: ${formatBRL(shortfall)} reservados para metas ficaram sem saldo. Ajuste com /retirada META VALOR @${position.name}.`,
+        );
+      } else if (!confirmationReason) {
+        const goals = position.allocations.map((a) => a.goalName).join(', ');
+        confirmationReason = `Isso usa ${formatBRL(shortfall)} que estão reservados em ${position.name} para ${goals}. Registrar mesmo assim?`;
+      }
+    }
+  }
   if (!confirmationReason && options.origin !== 'confirmation') {
     for (const transaction of resolved) {
       const twin = await findRecentTwin(deps, actor, transaction);
@@ -542,9 +683,10 @@ export async function recordDrafts(
   );
   if (toReserve) {
     settlement.notes.push(
-      `Se esse dinheiro é para o apartamento, confirme com /aporte ${formatBRL(toReserve.transaction.amountCents).replace('R$ ', '')}: transferência sozinha não conta na meta.`,
+      `Se esse dinheiro é para uma meta: /aporte META ${formatBRL(toReserve.transaction.amountCents).replace('R$ ', '')} @${toReserve.transaction.destinationAccountName} existente. Transferência sozinha não conta na meta.`,
     );
   }
+  settlement.notes.push(...(await paymentNotes(deps, actor, items)));
   const budget = await budgetFollowUp(deps, actor, items, actor.eventId);
   statements.push(...settlement.statements, ...budget.statements);
 
@@ -562,6 +704,8 @@ export async function recordDrafts(
       : [`${opener}:`, ...items.map((i) => `• ${transactionLine(actor, i.transaction, i.id)}`)];
   return {
     statements,
-    replies: [{ text: [...lines, ...settlement.notes, ...budget.notes].join('\n') }],
+    replies: [
+      { text: [...lines, ...settlement.notes, ...budget.notes, ...reservedNotes].join('\n') },
+    ],
   };
 }

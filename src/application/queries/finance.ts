@@ -5,6 +5,7 @@ import type { ExpectedDate } from '../../domain/finance/recurring';
 import { expectedDate } from '../../domain/finance/recurring';
 import type { Db } from '../../infrastructure/database/client';
 import {
+  balanceReconciliations,
   budgetAlerts,
   budgets,
   categories,
@@ -37,6 +38,7 @@ function expenseFilter(householdId: string, range: DateRange) {
 }
 
 export interface ExpenseFilter {
+  accountId?: string | undefined;
   categoryId?: string | undefined;
   memberId?: string | undefined;
   /** Exclui gastos marcados como do casal (orcamento individual). */
@@ -63,6 +65,7 @@ export async function sumExpenses(
         filter.categoryId ? eq(tx.categoryId, filter.categoryId) : undefined,
         filter.memberId ? eq(tx.memberId, filter.memberId) : undefined,
         filter.onlyIndividual ? eq(tx.isShared, false) : undefined,
+        filter.accountId ? eq(tx.sourceAccountId, filter.accountId) : undefined,
       ),
     );
   return row ?? { totalCents: 0, count: 0 };
@@ -179,21 +182,32 @@ export async function cashFlow(db: Db, householdId: string, range: DateRange): P
   return flow;
 }
 
+export interface AccountAllocation {
+  goalId: string;
+  goalName: string;
+  cents: number;
+}
+
 export interface AccountBalance {
   id: string;
   name: string;
   kind: string;
+  ownerMemberId: string | null;
+  ownership: string;
   /** Nulo quando o saldo inicial nao foi informado: nao ha saldo real a afirmar. */
   balanceCents: number | null;
   /** Movimentacao liquida registrada no Otto. */
   netMovementCents: number;
+  /** Parte do saldo destinada a metas ativas. */
+  allocatedCents: number;
+  allocations: AccountAllocation[];
 }
 
 /** Saldos sempre derivados dos lancamentos; nao existe coluna de saldo mutavel. */
 export async function accountBalances(db: Db, scope: Scope): Promise<AccountBalance[]> {
   const householdId = scope.household.id;
   const confirmed = and(eq(tx.householdId, householdId), eq(tx.status, 'confirmed'));
-  const [outflows, inflows] = await db.batch([
+  const [outflows, inflows, adjustments, reservations] = await db.batch([
     db
       .select({ accountId: tx.sourceAccountId, totalCents: sumAmount })
       .from(tx)
@@ -204,23 +218,62 @@ export async function accountBalances(db: Db, scope: Scope): Promise<AccountBala
       .from(tx)
       .where(confirmed)
       .groupBy(tx.destinationAccountId),
+    db
+      .select({
+        accountId: balanceReconciliations.accountId,
+        totalCents: sql<number>`coalesce(sum(${balanceReconciliations.differenceCents}), 0)`,
+      })
+      .from(balanceReconciliations)
+      .where(
+        and(
+          eq(balanceReconciliations.householdId, householdId),
+          eq(balanceReconciliations.status, 'adjusted'),
+        ),
+      )
+      .groupBy(balanceReconciliations.accountId),
+    db
+      .select({
+        accountId: goalContributions.accountId,
+        goalId: goalContributions.goalId,
+        goalName: financialGoals.name,
+        cents: sql<number>`coalesce(sum(case when ${goalContributions.direction} = 'in' then ${goalContributions.amountCents} else -${goalContributions.amountCents} end), 0)`,
+      })
+      .from(goalContributions)
+      .innerJoin(financialGoals, eq(goalContributions.goalId, financialGoals.id))
+      .where(
+        and(
+          eq(goalContributions.householdId, householdId),
+          eq(goalContributions.status, 'confirmed'),
+          eq(financialGoals.status, 'active'),
+        ),
+      )
+      .groupBy(goalContributions.accountId, goalContributions.goalId),
   ]);
   const outByAccount = new Map(outflows.map((row) => [row.accountId, row.totalCents]));
   const inByAccount = new Map(inflows.map((row) => [row.accountId, row.totalCents]));
+  const adjustedByAccount = new Map(adjustments.map((row) => [row.accountId, row.totalCents]));
 
   return scope.accounts.map((account) => {
     const net = (inByAccount.get(account.id) ?? 0) - (outByAccount.get(account.id) ?? 0);
+    const adjusted = adjustedByAccount.get(account.id) ?? 0;
     const isCard = account.kind === 'credit_card';
+    const allocations = reservations
+      .filter((row) => row.accountId === account.id && row.cents > 0)
+      .map((row) => ({ goalId: row.goalId, goalName: row.goalName, cents: row.cents }));
     return {
       id: account.id,
       name: account.name,
       kind: account.kind,
+      ownerMemberId: account.ownerMemberId,
+      ownership: account.ownership,
       balanceCents: isCard
-        ? net + (account.openingBalanceCents ?? 0)
+        ? net + (account.openingBalanceCents ?? 0) + adjusted
         : account.openingBalanceCents === null
           ? null
-          : account.openingBalanceCents + net,
+          : account.openingBalanceCents + net + adjusted,
       netMovementCents: net,
+      allocatedCents: allocations.reduce((sum, row) => sum + row.cents, 0),
+      allocations,
     };
   });
 }
@@ -233,6 +286,8 @@ export interface CommitmentView {
   expected: ExpectedDate;
   settled: boolean;
   memberId: string | null;
+  accountId: string | null;
+  frequency: 'monthly' | 'irregular';
 }
 
 export async function loadCommitments(
@@ -263,6 +318,8 @@ export async function loadCommitments(
       expected: expectedDate(entry, period),
       settled: settled.has(entry.id),
       memberId: entry.memberId,
+      accountId: entry.accountId,
+      frequency: entry.frequency,
     }))
     .sort((a, b) => (a.expected.date ?? '9999').localeCompare(b.expected.date ?? '9999'));
 }
@@ -350,14 +407,29 @@ export async function loadBudgetViews(
   });
 }
 
+export interface GoalLocation {
+  /** Nulo: dinheiro reservado sem local informado. */
+  accountId: string | null;
+  accountName: string;
+  cents: number;
+}
+
 export interface GoalView {
   id: string;
   name: string;
   kind: 'apartment' | 'general';
+  ownerMemberId: string | null;
   emergencyReserveCents: number | null;
+  linkedAccountId: string | null;
   deadline: string | null;
+  notes: string | null;
   progress: GoalProgress;
+  locations: GoalLocation[];
+  /** Quanto cada pessoa colocou na meta. */
+  contributors: { memberId: string; cents: number }[];
 }
+
+const UNKNOWN_LOCATION = 'local não informado';
 
 export async function loadGoals(db: Db, householdId: string, today: string): Promise<GoalView[]> {
   const [goals, contributions] = await db.batch([
@@ -372,8 +444,12 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
         amountCents: goalContributions.amountCents,
         contributionDate: goalContributions.contributionDate,
         kind: goalContributions.kind,
+        accountId: goalContributions.accountId,
+        accountName: financialAccounts.name,
+        memberId: goalContributions.memberId,
       })
       .from(goalContributions)
+      .leftJoin(financialAccounts, eq(goalContributions.accountId, financialAccounts.id))
       .where(
         and(
           eq(goalContributions.householdId, householdId),
@@ -385,12 +461,22 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
   return goals.map((goal) => {
     let confirmedCents = 0;
     let confirmedThisMonthCents = 0;
+    const byLocation = new Map<string | null, GoalLocation>();
+    const byMember = new Map<string, number>();
     for (const entry of contributions) {
       if (entry.goalId !== goal.id) continue;
       const signed = entry.direction === 'in' ? entry.amountCents : -entry.amountCents;
       confirmedCents += signed;
-      // O saldo inicial ja existia: nao e aporte feito no mes.
-      if (entry.kind !== 'initial' && periodOf(entry.contributionDate) === currentPeriod) {
+      const location = byLocation.get(entry.accountId) ?? {
+        accountId: entry.accountId,
+        accountName: entry.accountName ?? UNKNOWN_LOCATION,
+        cents: 0,
+      };
+      location.cents += signed;
+      byMember.set(entry.memberId, (byMember.get(entry.memberId) ?? 0) + signed);
+      byLocation.set(entry.accountId, location);
+      // Saldo inicial e dinheiro ja existente: nao sao aporte feito no mes.
+      if (entry.kind === 'contribution' && periodOf(entry.contributionDate) === currentPeriod) {
         confirmedThisMonthCents += signed;
       }
     }
@@ -398,10 +484,16 @@ export async function loadGoals(db: Db, householdId: string, today: string): Pro
       id: goal.id,
       name: goal.name,
       kind: goal.kind,
+      ownerMemberId: goal.ownerMemberId,
+      linkedAccountId: goal.linkedAccountId,
       emergencyReserveCents: goal.emergencyReserveCents,
       deadline: goal.deadline,
+      notes: goal.notes,
+      locations: [...byLocation.values()].filter((l) => l.cents !== 0),
+      contributors: [...byMember].map(([memberId, cents]) => ({ memberId, cents })),
       progress: computeGoalProgress(
         {
+          targetCents: goal.targetCents,
           entryCents: goal.entryCents,
           additionalCostsCents: goal.additionalCostsCents,
           deadline: goal.deadline,

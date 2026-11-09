@@ -56,6 +56,59 @@ Restrições no próprio banco: valor > 0, forma de cada tipo (transferência ex
 
 **Proteções contra o modelo.** Valor extraído que não aparece literalmente na mensagem exige confirmação. Confiança baixa exige confirmação. Pessoa fora do Household é recusada. Categoria desconhecida cai na regra de palavras-chave. Texto de análise que cite valor ou percentual ausente dos fatos calculados é descartado e substituído pelo relatório determinístico. Compromisso sem dia nem recorrência ("vou receber 800 semana que vem", "a luz veio 187") não vira previsão mensal: o Otto pergunta se é recorrente.
 
+## Contas, metas e reservas
+
+**Dono da conta.** Toda conta é de uma pessoa, do casal ou fica sem dono (`unassigned`, dados
+anteriores a esta versão). A identidade é dono + tipo (cartão ou conta) + nome, então Felipe e
+Jennifer podem ter cada um o seu Nubank.
+
+**Escolha da conta em Pix e débito**, nesta ordem: conta citada; padrão individual; única conta
+própria elegível; conta do casal marcada como alternativa; senão o Otto pergunta. A conta pessoal
+de outra pessoa nunca é escolhida sozinha. Pagar com uma conta não define quem é responsável pela
+despesa. Cartão segue a mesma ideia com o cartão padrão de quem pagou.
+
+**Crédito.** Crédito explícito sem número de parcelas é uma parcela só. "Comprei por R$ 90" sem
+falar em cartão não é crédito. A divisão de parcelas é exata em centavos.
+
+**Limite não é dinheiro.** Limite e disponível informados aparecem em `/minhascontas` e nunca
+entram em saldo ou patrimônio. Dívida informada no cadastro entra na fatura do período.
+
+**Faturas e parcelas.** Pagar fatura é transferência, não despesa nova: a compra já contou no dia
+em que foi feita. Em cartão com fechamento e vencimento cadastrados, a parcela é quitada pelo
+pagamento das faturas e `/parcela_paga` é recusado, para que marcar a parcela e pagar a fatura
+não contem o mesmo dinheiro duas vezes.
+
+**Metas.** `goal_contributions` é o livro-razão de cada meta, com a conta onde o dinheiro está.
+
+| Tipo           | Significado                                 | Conta no aporte do mês |
+| -------------- | ------------------------------------------- | ---------------------- |
+| `contribution` | dinheiro guardado agora                     | sim                    |
+| `allocation`   | dinheiro que já existia passa a ser da meta | não                    |
+| `initial`      | saldo informado ao configurar o apartamento | não                    |
+
+**Reservar não cria dinheiro.** O reservado é parte do saldo da própria conta: R$ 3.000 em três
+contas reservados para o apartamento são R$ 3.000 de patrimônio e R$ 3.000 reservados. Saldo não
+muda sem transferência explícita. Com saldo conhecido, reservar acima do livre é recusado; com
+saldo desconhecido, a reserva é aceita avisando que não foi possível validar. Gasto ou
+transferência que consome dinheiro reservado pede confirmação e avisa o quanto ficou descoberto.
+
+**Reconciliação.** `/saldo` compara o calculado com o informado. Diferença vira um ajuste separado
+e auditável, só com aprovação; os lançamentos não mudam e a causa nunca é presumida. Conta sem
+saldo conhecido apenas passa a ter saldo a partir do valor informado.
+
+**Renda.** Configurar uma renda nunca registra recebimento. Sem valor, "meu salário caiu" usa o
+previsto apenas quando a fonte é inequívoca, e pede confirmação. Recebimento parcial não quita a
+previsão do mês. Renda `irregular` fica fora da previsão mensal.
+
+**Potencialmente livre** (`/statuspessoal`, `/statuscasal`) é saldo livre conhecido menos contas a
+pagar do mês menos fatura a pagar. A premissa aparece junto do número, e contas sem saldo
+conhecido são listadas à parte. Não é previsão de gastos futuros.
+
+**Alertas proativos.** Lembretes de contas e faturas, orçamento, resumo semanal, fechamento mensal,
+acompanhamento de metas (a partir do dia 20), saldos divergentes sem decisão e observações
+semanais de gastos. Tendência só aparece com três meses de histórico. Tudo é calculado sem IA e
+cada aviso tem chave de deduplicação.
+
 ## Limitações conhecidas
 
 - Fatura: a regra do dia de fechamento é a mesma para todos os cartões; pagamentos são abatidos por ordem cronológica, sem indicar a qual fatura o casal quis pagar.

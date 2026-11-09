@@ -54,7 +54,7 @@ Faça com valores pequenos e estorne no final. Marque cada item. Pré-requisito:
 ## 6. Orçamento e meta
 
 - [ ] Limite pequeno (`/orcamento transporte 3`) e "gastei 2 de Uber" → aviso acima de 80%; novo gasto pequeno não repete o aviso.
-- [ ] `/aporte 1` → mostra a evolução e o pretendido do mês. Desfaça com `/desfazer_aporte`.
+- [ ] `/aporte 1` → mostra a evolução e o pretendido do mês. Desfaça com `/estornar`.
 - [ ] "Podemos pedir uma pizza de 90?" → resposta com números do orçamento e da renda prevista.
 - [ ] "Recebi metade do salário" → o Otto pergunta o valor; informe um valor menor que o previsto → a previsão não fica marcada como recebida.
 
