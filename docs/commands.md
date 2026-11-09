@@ -71,7 +71,7 @@ O CODIGO aparece em cada confirmação (`#a1b2c3`) e em `/ultimos`.
 | `/aporte [META] VALOR [@Conta] [de:Origem] [data]`              | aporte; com `de:` faz a transferência real                         |
 | `/alocar META VALOR @Conta`                                     | dinheiro que já existia passa a ser da meta                        |
 | `/retirada [META] VALOR [@Conta]`                               | libera dinheiro da meta                                            |
-| `/vincular META @Conta`                                         | define onde a meta fica; cria o cofre se ele não existir   |
+| `/vincular META @Conta`                                         | define onde a meta fica; cria o cofre se ele não existir           |
 | `/renda VALOR dia=N\|util=N [@Conta] [nome=] [de=] [irregular]` | cadastra uma fonte de renda                                        |
 | `/rendas`                                                       | rendas previstas e recebidas                                       |
 | `/recebi [nome] [valor] [@Conta]`                               | marca o recebimento, sem duplicar                                  |
