@@ -151,6 +151,8 @@ export async function setBudget(
 }
 
 export interface GoalFields {
+  /** Conta ou cofre onde o dinheiro da meta fica. */
+  linkedAccountId?: string | null;
   entry?: string | null;
   additionalCosts?: string | null;
   deadline?: string | null;
@@ -228,6 +230,7 @@ export async function updateApartmentGoal(
   if (deadline === null) return replyOnly('Prazo inválido. Use MM/AAAA, por exemplo 12/2027.');
 
   const changes = {
+    ...(fields.linkedAccountId ? { linkedAccountId: fields.linkedAccountId } : {}),
     ...(entryCents !== undefined && { entryCents: entryCents as number }),
     ...(additionalCostsCents !== undefined && {
       additionalCostsCents: additionalCostsCents as number,
@@ -293,6 +296,7 @@ export async function updateApartmentGoal(
         amountCents: initialCents as number,
         direction: 'in',
         kind: 'initial',
+        accountId: fields.linkedAccountId ?? null,
         contributionDate: actor.today,
         memberId: actor.member.id,
         idempotencyKey: `${actor.eventId}:initial`,

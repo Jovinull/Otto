@@ -75,6 +75,16 @@ export async function reportBalance(
   const direction = difference > 0 ? 'a mais' : 'a menos';
   return {
     statements: [
+      // So a informacao mais recente da conta fica aguardando decisao.
+      deps.db
+        .update(balanceReconciliations)
+        .set({ status: 'dismissed', resolvedAt: deps.now() })
+        .where(
+          and(
+            eq(balanceReconciliations.accountId, account.id),
+            eq(balanceReconciliations.status, 'pending'),
+          ),
+        ),
       deps.db.insert(balanceReconciliations).values({
         id,
         householdId: actor.scope.household.id,

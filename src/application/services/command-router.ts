@@ -190,6 +190,7 @@ const NOTIFICATION_KEYS = {
   semanal: 'weeklySummary',
   mensal: 'monthlyClosing',
   meta: 'goalFollowUp',
+  dicas: 'behavioralTips',
 } as const;
 
 function toneLabel(tone: Tone): string {
@@ -637,7 +638,7 @@ export async function handleCommand(
       const { notifications } = scope.settings;
       if (rest.length === 0) {
         return replyOnly(
-          `Notificações ${notifications.enabled ? 'ativas' : 'desativadas'}. Ajuste: /notificacoes on|off ou /notificacoes contas|orcamento|semanal|mensal|meta on|off`,
+          `Notificações ${notifications.enabled ? 'ativas' : 'desativadas'}. Ajuste: /notificacoes on|off ou /notificacoes contas|orcamento|semanal|mensal|meta|dicas on|off`,
         );
       }
       const flag = normalizeText(rest.at(-1)!);
@@ -652,7 +653,7 @@ export async function handleCommand(
         );
       }
       const key = NOTIFICATION_KEYS[normalizeText(rest[0]!) as keyof typeof NOTIFICATION_KEYS];
-      if (!key) return replyOnly('Tipos: contas, orcamento, semanal, mensal, meta.');
+      if (!key) return replyOnly('Tipos: contas, orcamento, semanal, mensal, meta, dicas.');
       return saveSettings(
         deps,
         actor,

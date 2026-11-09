@@ -53,6 +53,32 @@ O CODIGO aparece em cada confirmação (`#a1b2c3`) e em `/ultimos`.
 | `/recorrente despesa\|receita VALOR [dia=N\|util=N] nome [de=Nome]`    | `/recorrente despesa 1200 dia=5 aluguel` · use `?` para valor variável                                            |
 | `/renda VALOR dia=N\|util=N`                                           | `/renda 4200 util=5`                                                                                              |
 
+## Contas, metas e renda por pessoa
+
+| Comando                                                         | O que faz                                                          |
+| --------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `/contapadrao [Conta]` (ou `/padrao`)                           | mostra ou define a sua conta padrão                                |
+| `/cartaopadrao [Cartão]`                                        | mostra ou define o seu cartão padrão                               |
+| `/minhascontas`, `/meusaldos`, `/meuscartoes`, `/minhasmetas`   | o que é da pessoa; aceitam um nome                                 |
+| `/statuspessoal [Nome]`                                         | renda, gastos, contas, cartões, metas e valor potencialmente livre |
+| `/statuscasal`                                                  | visão do casal, sem somar conta compartilhada duas vezes           |
+| `/saldo Conta VALOR`                                            | compara com o saldo real; diferença só ajusta com aprovação        |
+| `/livre Conta`                                                  | saldo menos o que está reservado para metas                        |
+| `/meta criar NOME valor= [prazo=] [aporte=] [dono=]`            | cria uma meta                                                      |
+| `/meta NOME`, `/meta status NOME`, `/metas`                     | progresso e onde está o dinheiro                                   |
+| `/meta editar NOME [valor=] [prazo=] [aporte=] [nome=] [nota=]` | altera a meta                                                      |
+| `/meta remover NOME`                                            | arquiva, sem mover dinheiro (pede confirmação)                     |
+| `/aporte [META] VALOR [@Conta] [de:Origem] [data]`              | aporte; com `de:` faz a transferência real                         |
+| `/alocar META VALOR @Conta`                                     | dinheiro que já existia passa a ser da meta                        |
+| `/retirada [META] VALOR [@Conta]`                               | libera dinheiro da meta                                            |
+| `/vincular META @Conta`                                         | define onde a meta fica; cria o cofre se ele não existir   |
+| `/renda VALOR dia=N\|util=N [@Conta] [nome=] [de=] [irregular]` | cadastra uma fonte de renda                                        |
+| `/rendas`                                                       | rendas previstas e recebidas                                       |
+| `/recebi [nome] [valor] [@Conta]`                               | marca o recebimento, sem duplicar                                  |
+| `/notificacoes dicas on\|off`                                   | liga ou desliga as observações semanais                            |
+
+Nomes com espaço usam `_` depois de `@` e `de:`: `@Mercado_Pago`.
+
 ## Editar e remover
 
 | Comando                                                                 | Exemplo                                                                                                                                                    |

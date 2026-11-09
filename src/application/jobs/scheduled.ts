@@ -1,8 +1,10 @@
-import { and, eq, inArray, lt, or } from 'drizzle-orm';
+import { and, eq, gt, gte, inArray, lt, lte, or } from 'drizzle-orm';
 import { newThresholds } from '../../domain/budgets/budget';
 import type { Stmt } from '../../infrastructure/database/client';
 import { commitAtomically } from '../../infrastructure/database/client';
 import {
+  balanceReconciliations,
+  financialTransactions,
   households,
   incomingEvents,
   outgoingMessages,
@@ -211,6 +213,161 @@ async function goalFollowUp(deps: Deps, scope: Scope, clock: LocalClock): Promis
   return [enqueue(deps, scope, `goal:${scope.household.id}:${periodOf(clock.date)}`, text)];
 }
 
+const GOAL_GAP_FROM_DAY = 20;
+
+/** Perto do fim do mes, compara o que foi guardado com o que se pretendia guardar. */
+async function goalGapAlert(deps: Deps, scope: Scope, clock: LocalClock): Promise<Stmt[]> {
+  const goals = (await loadGoals(deps.db, scope.household.id, clock.date)).filter(
+    (g) => (g.progress.plannedMonthlyCents ?? 0) > 0 && (g.progress.remainingCents ?? 1) > 0,
+  );
+  if (goals.length === 0) return [];
+  const lines = goals.map((goal) => {
+    const planned = goal.progress.plannedMonthlyCents!;
+    const saved = goal.progress.confirmedThisMonthCents;
+    return saved >= planned
+      ? `• ${goal.name}: ${formatBRL(saved)} guardados, meta do mês batida. 👏`
+      : `• ${goal.name}: ${formatBRL(saved)} de ${formatBRL(planned)} neste mês; faltam ${formatBRL(planned - saved)}.`;
+  });
+  return [
+    enqueue(
+      deps,
+      scope,
+      `goal-gap:${scope.household.id}:${periodOf(clock.date)}`,
+      ['🎯 Como estão as metas do mês:', ...lines, 'Guardou e não anotou? Use /aporte.'].join('\n'),
+    ),
+  ];
+}
+
+const RECONCILIATION_WINDOW_MS = 30 * DAY_MS;
+
+async function reconciliationReminder(
+  deps: Deps,
+  scope: Scope,
+  clock: LocalClock,
+): Promise<Stmt[]> {
+  const rows = await deps.db
+    .select({ accountId: balanceReconciliations.accountId })
+    .from(balanceReconciliations)
+    .where(
+      and(
+        eq(balanceReconciliations.householdId, scope.household.id),
+        eq(balanceReconciliations.status, 'pending'),
+        gt(balanceReconciliations.createdAt, deps.now() - RECONCILIATION_WINDOW_MS),
+      ),
+    );
+  const names = [...new Set(rows.map((r) => r.accountId))]
+    .map((id) => scope.accounts.find((a) => a.id === id)?.name)
+    .filter(Boolean);
+  if (names.length === 0) return [];
+  return [
+    enqueue(
+      deps,
+      scope,
+      `reconcile:${scope.household.id}:${weekRange(clock.date).from}`,
+      `🔎 Saldo divergente sem decisão: ${names.join(', ')}. Confira com /saldo CONTA VALOR.`,
+    ),
+  ];
+}
+
+const TREND_MIN_MONTHS = 3;
+const TREND_MIN_DAY = 8;
+const TREND_MIN_DELTA_CENTS = 5_000;
+const EXCEPTIONAL_MIN_CENTS = 20_000;
+const EXCEPTIONAL_MIN_HISTORY = 5;
+const MAX_INSIGHT_LINES = 3;
+
+/**
+ * Observacoes semanais com numeros calculados aqui, sem IA. Tendencia so com historico de
+ * pelo menos tres meses, para nao tirar conclusao de pouco dado.
+ */
+async function spendingInsights(deps: Deps, scope: Scope, clock: LocalClock): Promise<Stmt[]> {
+  const period = periodOf(clock.date);
+  const months = [1, 2, 3].map((n) => addMonths(period, -n));
+  const rows = await deps.db
+    .select({
+      categoryId: financialTransactions.categoryId,
+      date: financialTransactions.financialDate,
+      amountCents: financialTransactions.amountCents,
+      description: financialTransactions.description,
+    })
+    .from(financialTransactions)
+    .where(
+      and(
+        eq(financialTransactions.householdId, scope.household.id),
+        eq(financialTransactions.status, 'confirmed'),
+        eq(financialTransactions.type, 'expense'),
+        gte(financialTransactions.financialDate, monthRange(months[2]!).from),
+        lte(financialTransactions.financialDate, clock.date),
+      ),
+    );
+  const withData = new Set(rows.map((r) => periodOf(r.date)));
+  if (months.some((m) => !withData.has(m)) || months.length < TREND_MIN_MONTHS) return [];
+
+  const categoryName = (id: string | null) =>
+    scope.categories.find((c) => c.id === id)?.name ?? 'Sem categoria';
+  const day = Number(clock.date.slice(8));
+  const daysInMonth = Number(monthRange(period).to.slice(8));
+  const up: string[] = [];
+  const down: string[] = [];
+  if (day >= TREND_MIN_DAY) {
+    for (const categoryId of new Set(rows.map((r) => r.categoryId))) {
+      const inCategory = rows.filter((r) => r.categoryId === categoryId);
+      const history = inCategory
+        .filter((r) => periodOf(r.date) !== period)
+        .reduce((sum, r) => sum + r.amountCents, 0);
+      const current = inCategory
+        .filter((r) => periodOf(r.date) === period)
+        .reduce((sum, r) => sum + r.amountCents, 0);
+      const usual = Math.round(((history / months.length) * day) / daysInMonth);
+      if (current >= Math.round(usual * 1.3) && current - usual >= TREND_MIN_DELTA_CENTS) {
+        up.push(
+          `• ${categoryName(categoryId)}: ${formatBRL(current)} até agora; o ritmo usual seria ${formatBRL(usual)}.`,
+        );
+      } else if (
+        usual > 0 &&
+        current <= Math.round(usual * 0.7) &&
+        usual - current >= TREND_MIN_DELTA_CENTS
+      ) {
+        down.push(
+          `• ${categoryName(categoryId)}: ${formatBRL(current)} até agora, abaixo dos ${formatBRL(usual)} de costume. Boa! 👏`,
+        );
+      }
+    }
+  }
+
+  const lastWeek = weekRange(addDays(clock.date, -7));
+  const exceptional: string[] = [];
+  for (const row of rows) {
+    if (row.date < lastWeek.from || row.date > lastWeek.to) continue;
+    if (row.amountCents < EXCEPTIONAL_MIN_CENTS) continue;
+    const others = rows.filter((r) => r.categoryId === row.categoryId && r !== row);
+    if (others.length < EXCEPTIONAL_MIN_HISTORY) continue;
+    const average = others.reduce((sum, r) => sum + r.amountCents, 0) / others.length;
+    if (row.amountCents >= average * 3) {
+      exceptional.push(
+        `• ${row.description}: ${formatBRL(row.amountCents)}, bem acima da média de ${formatBRL(Math.round(average))} em ${categoryName(row.categoryId)}.`,
+      );
+    }
+  }
+
+  const blocks = [
+    up.length ? ['Acima do costume neste mês:', ...up.slice(0, MAX_INSIGHT_LINES)] : [],
+    exceptional.length
+      ? ['Fora do padrão na semana passada:', ...exceptional.slice(0, MAX_INSIGHT_LINES)]
+      : [],
+    down.length ? ['Abaixo do costume:', ...down.slice(0, MAX_INSIGHT_LINES)] : [],
+  ].flat();
+  if (blocks.length === 0) return [];
+  return [
+    enqueue(
+      deps,
+      scope,
+      `insights:${scope.household.id}:${weekRange(clock.date).from}`,
+      ['💡 Para olhar com calma:', ...blocks, 'São comparações com os últimos 3 meses.'].join('\n'),
+    ),
+  ];
+}
+
 /** Decide o que enviar com base no relogio local. As chaves de dedup impedem repeticao. */
 export async function proactiveStatements(
   deps: Deps,
@@ -231,6 +388,9 @@ export async function proactiveStatements(
     if (dayOfMonth === 15 && notifications.goalFollowUp) {
       statements.push(...(await goalFollowUp(deps, scope, clock)));
     }
+    if (dayOfMonth >= GOAL_GAP_FROM_DAY && notifications.goalFollowUp) {
+      statements.push(...(await goalGapAlert(deps, scope, clock)));
+    }
   }
   if (
     clock.weekday === 1 &&
@@ -239,6 +399,12 @@ export async function proactiveStatements(
     notifications.weeklySummary
   ) {
     statements.push(...(await weeklySummary(deps, scope, clock)));
+  }
+  if (clock.weekday === 1 && clock.hour >= WEEKLY_HOUR && clock.hour < 21) {
+    statements.push(...(await reconciliationReminder(deps, scope, clock)));
+    if (notifications.behavioralTips) {
+      statements.push(...(await spendingInsights(deps, scope, clock)));
+    }
   }
   return statements;
 }

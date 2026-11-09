@@ -10,6 +10,7 @@ const NotificationSettings = z.object({
   weeklySummary: z.boolean().default(true),
   monthlyClosing: z.boolean().default(true),
   goalFollowUp: z.boolean().default(true),
+  behavioralTips: z.boolean().default(true),
 });
 
 export const HouseholdSettings = z.object({

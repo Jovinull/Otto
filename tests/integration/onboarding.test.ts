@@ -57,7 +57,17 @@ describe('cadastro guiado', () => {
     expect(h.messaging.last()).toContain('renda prevista R$ 7.300,00, contas fixas R$ 1.355,80');
     await answer('900', '250', 'pular', '300', 'pular');
     expect(h.messaging.last()).toContain('Etapa 6/6');
-    await answer('80000', 'não sei', '12/2027', '3000', '1500', '6000');
+    await answer(
+      '80000',
+      'não sei',
+      '12/2027',
+      '3000',
+      'Nubank',
+      '1500',
+      '6000',
+      'pronto',
+      'todos',
+    );
 
     const summary = h.messaging.last();
     expect(summary).toContain('Resumo do que vou ativar');
@@ -98,7 +108,7 @@ describe('cadastro guiado', () => {
     for (let i = 0; i < 6; i++) await answer('pular');
     await answer('pronto');
     for (let i = 0; i < 5; i++) await answer('pular');
-    for (let i = 0; i < 6; i++) await answer('pular');
+    for (let i = 0; i < 8; i++) await answer('pular');
     expect(h.messaging.last()).toContain('Nada informado ainda');
     await h.press(buttonData(h.messaging, 'c'));
     expect(await configRows()).toBe(0);
@@ -132,7 +142,7 @@ describe('cadastro guiado', () => {
     await answer('5000', 'dia 5', '3000', 'dia 10', 'pronto');
     for (let i = 0; i < 6; i++) await answer('pular');
     await answer('pronto');
-    for (let i = 0; i < 11; i++) await answer('pular');
+    for (let i = 0; i < 13; i++) await answer('pular');
     expect(h.messaging.last()).toContain('Renda prevista de Felipe: R$ 5.000,00/mês');
     expect(h.messaging.last()).toContain('Tom: neutro');
   });
@@ -162,7 +172,7 @@ describe('cadastro guiado', () => {
     await answer('/configurar', 'neutro', 'pular', 'pular', 'pronto');
     for (let i = 0; i < 6; i++) await answer('pular');
     await answer('pronto');
-    for (let i = 0; i < 11; i++) await answer('pular');
+    for (let i = 0; i < 13; i++) await answer('pular');
     await h.press(buttonData(h.messaging, 'c'));
     await answer('/configurar');
     expect(h.messaging.last()).toContain('já foi concluído');
@@ -178,10 +188,11 @@ describe('cadastro guiado', () => {
       'cartao D fecha 1 vence 8',
       'pronto',
     );
+    await answer('A', 'A');
     await answer('1200 dia 5', '400 dia 6', '150 dia 7', '80 dia 8', '100 dia 9');
     await answer('netflix 55 dia 1', 'spotify 22 dia 2', 'escola 900 dia 3', 'pronto');
     await answer('900', '250', '300', '200', '150');
-    await answer('80000', '10000', '12/2027', '3000', '1500', '6000');
+    await answer('80000', '10000', '12/2027', '3000', 'pular', '1500', '6000', 'pronto', 'todos');
     h.setNow(h.now() + MINUTE);
     await h.press(buttonData(h.messaging, 'c'));
     expect(h.deps.meter.count).toBeLessThanOrEqual(SUBREQUEST_LIMIT);

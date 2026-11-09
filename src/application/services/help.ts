@@ -10,6 +10,7 @@ Sem IA (sempre funciona):
 /transferir 500 nubank para reserva
 /resumo · /mes 10/2026 · /semana · /comparar · /individual
 /orcamento · /metas · /contas · /compromissos · /parcelas
+/statuspessoal · /statuscasal · /minhascontas · /rendas
 /ultimos · /corrigir · /estornar
 /configurar faz o cadastro guiado; /configurar status mostra o que falta.
 /comandos lista todos os comandos.
@@ -25,7 +26,10 @@ Corrigir: /corrigir a1b2c3 valor 30,00 · categoria lazer · data 03/11
 Estornar: /estornar a1b2c3 (pede confirmação)`,
   contas: `Contas
 /addconta corrente|poupanca|dinheiro|reserva|conjunta|cartao Nome [saldo=1200,50] [padrao] [fecha=3] [vence=10] [dono=Nome]
-/padrao Nome define sua conta padrão
+/contapadrao Nome ou /padrao Nome: sua conta padrão · /cartaopadrao Nome: seu cartão padrão
+Cada pessoa tem o próprio padrão; a conta de outra pessoa nunca é escolhida sozinha.
+/saldo Nubank 830 compara com o saldo real e só ajusta se você aprovar.
+/livre Nubank mostra quanto da conta não está reservado para metas.
 /transferir 500 origem para destino · /pagar_fatura 850 origem para cartao
 Sem saldo inicial eu mostro só o que foi movimentado aqui, nunca um saldo real.
 /fatura mostra cada fatura (fechada, atual e parcelas futuras) quando o cartão tem fecha= e vence=.\nJuros e multas: lance como gasto no cartão, ex.: /gasto 12,90 juros @Nubank.`,
@@ -42,19 +46,26 @@ Lançamentos: /corrigir e /estornar.`,
 /orcamento delivery 250 · /orcamento total 3000 · /orcamento lazer 150 de=Jennifer
 /orcamento consulta · /orcamento delivery consulta uma categoria
 Avisos em 80%, 100% e ao ultrapassar, uma vez por mês.`,
-  meta: `Meta do apartamento
-/meta entrada=80000 custos=10000 prazo=12/2027 aporte=1500 reserva=5000 inicial=3000
-"aporte" é intenção. Só conta como guardado o que entrar por inicial= ou /aporte 500.
-/retirada 200 · /desfazer_aporte CODIGO · /metas consulta o progresso`,
+  meta: `Metas
+/meta criar Viagem valor=8000 [prazo=12/2027] [aporte=500] [dono=Jennifer]
+/meta Viagem · /meta editar Viagem valor=9000 · /meta remover Viagem · /metas
+/aporte Viagem 500 @Cofre de:Nubank (transfere de verdade e reserva)
+/aporte Viagem 500 @Nubank (dinheiro novo que já está lá)
+/alocar Viagem 500 @Nubank (dinheiro que já existia; não conta como aporte do mês)
+/retirada Viagem 200 @Nubank · /vincular Viagem @Cofre · /desfazer_aporte CODIGO
+Reservar não cria dinheiro: R$ 3.000 em contas continuam R$ 3.000 no patrimônio.
+Apartamento: /meta entrada=80000 custos=10000 prazo=12/2027 aporte=1500 reserva=5000 inicial=3000
+"aporte" é intenção. Só conta como guardado o que entrar por inicial= ou /aporte.`,
   recorrentes: `Compromissos e renda prevista
 /recorrente despesa 1200 dia=5 aluguel
 /recorrente despesa ? dia=10 energia (valor variável)
-/renda 4200 util=5
+/renda 4200 util=5 @Nubank [nome=Freelance] [de=Jennifer] [irregular]
+/rendas lista as rendas · /recebi [nome] [valor] marca o recebimento
 util=5 é aproximado: não considero feriados.
 Nada é marcado como pago sozinho: avise com "paguei o aluguel, 1200".`,
   opcoes: `Preferências
 /tom neutro|amigavel|firme
-/notificacoes on|off · /notificacoes contas|orcamento|semanal|mensal|meta on|off
+/notificacoes on|off · /notificacoes contas|orcamento|semanal|mensal|meta|dicas on|off
 /categorias · /addcategoria Nome essencial|discricionaria|outra
 /ia mostra o consumo estimado · /status mostra a saúde do sistema`,
 };
@@ -79,7 +90,12 @@ Consultas
 /contas — saldos conhecidos e cartões
 /compromissos — contas a pagar e renda prevista
 /orcamento [categoria] — situação dos orçamentos
-/metas — meta do apartamento
+/metas · /meta NOME — progresso e onde está o dinheiro
+/statuspessoal [Nome] — renda, contas, cartões e metas da pessoa
+/statuscasal — visão do casal, sem somar nada duas vezes
+/minhascontas · /meusaldos · /meuscartoes · /minhasmetas — o que é seu
+/rendas — rendas previstas e recebidas
+/livre conta — saldo menos o reservado para metas
 /parcelas — parcelamentos ativos
 /fatura [cartão] — faturas do cartão: total, pago e pendente
 /ultimos [N] — últimos lançamentos com código
@@ -88,13 +104,19 @@ Consultas
 
 Cadastro
 /addconta tipo Nome [saldo=] [padrao] [fecha=] [vence=] — cria conta ou cartão
-/padrao Conta — sua conta padrão
+/contapadrao Conta (ou /padrao) · /cartaopadrao Cartão — seus padrões
+/saldo Conta VALOR — compara com o saldo real
 /addcategoria Nome essencial|discricionaria|outra — cria categoria
 /orcamento categoria VALOR [de=Nome] — define limite mensal
-/meta entrada= custos= prazo=MM/AAAA aporte= reserva= inicial= — configura a meta
-/aporte VALOR · /retirada VALOR · /desfazer_aporte CÓDIGO — dinheiro da meta
+/meta criar NOME valor= prazo= aporte= dono= — cria uma meta
+/meta editar NOME valor= prazo= aporte= nome= · /meta remover NOME
+/meta entrada= custos= prazo=MM/AAAA aporte= reserva= inicial= — meta do apartamento
+/aporte [META] VALOR [@Conta] [de:Origem] · /retirada [META] VALOR [@Conta] — dinheiro da meta
+/alocar META VALOR @Conta — dinheiro existente · /vincular META @Conta — onde a meta fica
+/desfazer_aporte CÓDIGO — desfaz o aporte e a transferência dele
 /recorrente despesa|receita VALOR dia=N|util=N nome — conta ou receita fixa
-/renda VALOR dia=N|util=N — sua renda prevista
+/renda VALOR dia=N|util=N [@Conta] [nome=] [de=] [irregular] — renda prevista
+/recebi [nome] [valor] — marca a renda como recebida
 
 Editar e remover
 /editconta Nome nome= saldo= fecha= vence= dono= padrao — altera conta ou cartão
@@ -106,7 +128,7 @@ Editar e remover
 /orcamento categoria VALOR — muda o limite · /meta campo=valor — muda a meta
 
 Sistema
-/configurar — cadastro guiado (pausar, status, renda, contas, fixas, orcamento, apartamento)
+/configurar — cadastro guiado (pausar, status, renda, contas, fixas, orcamento, apartamento, alertas)
 /tom neutro|amigavel|firme — estilo das respostas (admin)
 /notificacoes on|off — avisos automáticos (admin)
 /ia — consumo de IA · /status — saúde do Otto · /id — seus IDs

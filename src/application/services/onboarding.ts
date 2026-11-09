@@ -1,17 +1,27 @@
 import { and, eq } from 'drizzle-orm';
 import type { ScheduleType } from '../../domain/finance/recurring';
 import type { AccountKind } from '../../domain/finance/transactions';
-import type { Tone } from '../../domain/household/settings';
+import { accountIdentityKey } from '../../domain/finance/transactions';
+import type { HouseholdSettings, Tone } from '../../domain/household/settings';
+import { parseMemberPreferences } from '../../domain/household/settings';
 import type { Stmt } from '../../infrastructure/database/client';
 import {
   households,
   onboardingSessions,
   pendingActions,
+  recurringEntries,
 } from '../../infrastructure/database/schema';
 import { parseMonthExpression } from '../../shared/dates';
 import { formatBRL, parseBRL } from '../../shared/money';
 import { normalizeText } from '../../shared/text';
-import { addAccount, addCommitment, setBudget, updateApartmentGoal } from '../commands/planning';
+import { createGoal } from '../commands/goals';
+import {
+  addAccount,
+  addCommitment,
+  setBudget,
+  setMemberDefaultStatement,
+  updateApartmentGoal,
+} from '../commands/planning';
 import { confirmationButtons, createPendingStatement } from '../commands/record-transactions';
 import { auditStatement } from '../commands/shared';
 import type { Actor, Deps, Effect, Member } from '../context';
@@ -29,7 +39,17 @@ interface DraftAccount {
   openingCents: number | null;
   closingDay: number | null;
   dueDay: number | null;
+  /** Nome da pessoa ou "casal". Vazio: de quem conduz o cadastro. */
+  ownerText?: string | null;
 }
+
+interface DraftGoal {
+  name: string;
+  targetCents: number;
+  deadline: string | null;
+}
+
+type AlertChoice = 'todos' | 'contas' | 'resumos' | 'nenhum';
 
 interface DraftBill extends Schedule {
   name: string;
@@ -41,7 +61,10 @@ interface DraftBill extends Schedule {
 export interface OnboardingState {
   answered: string[];
   tone?: Tone;
-  income: Record<string, { amountCents: number } & Partial<Schedule>>;
+  income: Record<string, { amountCents: number; accountName?: string } & Partial<Schedule>>;
+  defaults: Record<string, { accountName?: string; cardName?: string }>;
+  extraGoals: DraftGoal[];
+  alerts?: AlertChoice;
   accounts: DraftAccount[];
   bills: DraftBill[];
   budgets: Record<string, number>;
@@ -52,12 +75,15 @@ export interface OnboardingState {
     savedCents?: number;
     monthlyCents?: number;
     reserveCents?: number;
+    accountName?: string;
   };
 }
 
 const emptyState = (): OnboardingState => ({
   answered: [],
   income: {},
+  defaults: {},
+  extraGoals: [],
   accounts: [],
   bills: [],
   budgets: {},
@@ -143,7 +169,10 @@ const ACCOUNT_KINDS: Record<string, AccountKind> = {
   cartao: 'credit_card',
 };
 
-function parseAccount(text: string): Parsed<DraftAccount> | { done: true } {
+function parseAccount(
+  text: string,
+  members: readonly Member[],
+): Parsed<DraftAccount> | { done: true } {
   const value = clean(text);
   if (DONE.has(value) || SKIP.has(value)) return { done: true };
   const tokens = text.trim().split(/\s+/);
@@ -157,6 +186,24 @@ function parseAccount(text: string): Parsed<DraftAccount> | { done: true } {
     rest.splice(index, 2);
     return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
   };
+  let ownerText: string | null = null;
+  const ownerIndex = rest.findIndex((token, index) => {
+    if (!['de', 'dono'].includes(normalizeText(token))) return false;
+    const next = normalizeText(rest[index + 1] ?? '');
+    return members.some((m) => normalizeText(m.name).split(' ')[0] === next);
+  });
+  if (ownerIndex >= 0) {
+    ownerText = rest[ownerIndex + 1]!;
+    rest.splice(ownerIndex, 2);
+  } else {
+    const shared = rest.findIndex((t) =>
+      ['casal', 'compartilhada', 'compartilhado'].includes(normalizeText(t)),
+    );
+    if (shared >= 0) {
+      ownerText = 'casal';
+      rest.splice(shared, 1);
+    }
+  }
   const closingDay = kind === 'credit_card' ? takeDay('fecha') : null;
   const dueDay = kind === 'credit_card' ? takeDay('vence') : null;
   let openingCents: number | null = null;
@@ -170,7 +217,7 @@ function parseAccount(text: string): Parsed<DraftAccount> | { done: true } {
   }
   const name = rest.join(' ').trim();
   if (!name) return null;
-  return { value: { kind, name, openingCents, closingDay, dueDay } };
+  return { value: { kind, name, openingCents, closingDay, dueDay, ownerText } };
 }
 
 function parseBill(text: string): Parsed<Omit<DraftBill, 'name' | 'categorySlug'>> {
@@ -209,6 +256,24 @@ function parseOtherBill(text: string): Parsed<DraftBill> | { done: true } {
   const bill = parseBill(`${match[2]}${match[3]}`);
   if (!bill || !('value' in bill)) return null;
   return { value: { name: match[1]!.trim(), categorySlug: null, ...bill.value } };
+}
+
+function parseExtraGoal(text: string, today: string): Parsed<DraftGoal> | { done: true } {
+  const value = clean(text);
+  if (DONE.has(value) || SKIP.has(value)) return { done: true };
+  const match = /^(.+?)\s+((?:r\$\s*)?[\d.,]+(?:\s*mil)?)(?:\s+at[eé]\s+(\S+))?$/i.exec(
+    text.trim(),
+  );
+  if (!match) return null;
+  const parsed = parseBRL(match[2]!.replace(/^r\$\s*/i, ''));
+  if (parsed.status !== 'ok') return null;
+  let deadline: string | null = null;
+  if (match[3]) {
+    const when = parseDeadline(match[3], today);
+    if (!when || !('value' in when)) return null;
+    deadline = when.value;
+  }
+  return { value: { name: match[1]!.trim(), targetCents: parsed.cents, deadline } };
 }
 
 function parseDeadline(text: string, today: string): Parsed<string> {
@@ -254,8 +319,62 @@ interface Step {
   when?: (state: OnboardingState) => boolean;
 }
 
-export type StepGroup = 'pessoas' | 'renda' | 'contas' | 'fixas' | 'orcamento' | 'apartamento';
-const GROUPS: StepGroup[] = ['pessoas', 'renda', 'contas', 'fixas', 'orcamento', 'apartamento'];
+export type StepGroup =
+  'pessoas' | 'renda' | 'contas' | 'fixas' | 'orcamento' | 'apartamento' | 'alertas';
+const GROUPS: StepGroup[] = [
+  'pessoas',
+  'renda',
+  'contas',
+  'fixas',
+  'orcamento',
+  'apartamento',
+  'alertas',
+];
+
+/** Dono de uma conta do rascunho. Nulo: conta do casal. */
+function draftOwner(actor: Actor, account: DraftAccount): string | null {
+  if (!account.ownerText) return account.kind === 'joint' ? null : actor.member.id;
+  const text = normalizeText(account.ownerText);
+  if (text === 'casal') return null;
+  return (
+    actor.scope.members.find((m) => normalizeText(m.name).split(' ')[0] === text.split(' ')[0])
+      ?.id ?? actor.member.id
+  );
+}
+
+/** Contas ou cartoes da pessoa, somando o que ja existe e o que esta no rascunho. */
+function eligibleNames(
+  actor: Actor,
+  state: OnboardingState,
+  memberId: string,
+  card: boolean,
+): string[] {
+  const accepts = (kind: string) =>
+    card
+      ? kind === 'credit_card'
+      : kind !== 'credit_card' && kind !== 'reserve' && kind !== 'joint';
+  const names = [
+    ...actor.scope.accounts
+      .filter((a) => a.ownerMemberId === memberId && accepts(a.kind))
+      .map((a) => a.name),
+    ...state.accounts
+      .filter((a) => draftOwner(actor, a) === memberId && accepts(a.kind))
+      .map((a) => a.name),
+  ];
+  return [...new Set(names)];
+}
+
+function findName(options: readonly string[], text: string): string | null {
+  const wanted = normalizeText(text);
+  return options.find((name) => normalizeText(name) === wanted) ?? null;
+}
+
+const allAccountNames = (actor: Actor, state: OnboardingState): string[] => [
+  ...new Set([
+    ...actor.scope.accounts.filter((a) => a.kind !== 'credit_card').map((a) => a.name),
+    ...state.accounts.filter((a) => a.kind !== 'credit_card').map((a) => a.name),
+  ]),
+];
 
 function amountStep(
   id: string,
@@ -284,7 +403,8 @@ function totalBills(state: OnboardingState): number {
   return state.bills.reduce((sum, b) => sum + (b.amountCents ?? 0), 0);
 }
 
-function buildSteps(members: readonly Member[]): Step[] {
+function buildSteps(actor: Actor): Step[] {
+  const members = actor.scope.members.filter((m) => m.status === 'active');
   const names = members.map((m) => m.name).join(' e ');
   const steps: Step[] = [
     {
@@ -333,19 +453,60 @@ function buildSteps(members: readonly Member[]): Step[] {
     group: 'contas',
     ask: (state) =>
       state.accounts.length === 0
-        ? 'Etapa 3/6 — Contas. Mande uma por mensagem, assim:\n• corrente Nubank 1200 (saldo de hoje, opcional)\n• reserva Caixinha 5000\n• cartao Nubank fecha 3 vence 10\nSó informe saldo que vocês conferiram. Quando terminar, "pronto".'
+        ? 'Etapa 3/6 — Contas e cartões de cada um. Mande uma por mensagem, assim:\n• corrente Nubank 1200 (saldo de hoje, opcional)\n• corrente Nubank 800 de Jennifer\n• conjunta Casa 1500 casal\n• reserva Caixinha 5000\n• cartao Nubank fecha 3 vence 10\nSó informe saldo que vocês conferiram. Quando terminar, "pronto".'
         : `Anotei: ${state.accounts.map((a) => a.name).join(', ')}. Mais alguma? Ou "pronto".`,
     apply: (state, text) => {
-      const parsed = parseAccount(text);
+      const parsed = parseAccount(text, members);
       if (!parsed) return null;
       if ('done' in parsed) return 'ok';
       if (!('value' in parsed)) return 'ok';
       const exists = state.accounts.some(
-        (a) => normalizeText(a.name) === normalizeText(parsed.value.name),
+        (a) =>
+          normalizeText(a.name) === normalizeText(parsed.value.name) &&
+          (a.kind === 'credit_card') === (parsed.value.kind === 'credit_card') &&
+          draftOwner(actor, a) === draftOwner(actor, parsed.value),
       );
       if (!exists) state.accounts.push(parsed.value);
       return 'loop';
     },
+  });
+  members.forEach((member) => {
+    const preferences = parseMemberPreferences(member.preferences);
+    const defaultStep = (card: boolean, current: string | undefined): Step => ({
+      id: `padrao:${card ? 'cartao' : 'conta'}:${member.id}`,
+      group: 'contas',
+      when: (state) => !current && eligibleNames(actor, state, member.id, card).length > 1,
+      ask: (state) =>
+        `Qual é ${card ? 'o cartão padrão' : 'a conta principal'} de ${member.name}? Opções: ${eligibleNames(actor, state, member.id, card).join(', ')}.`,
+      apply: (state, text) => {
+        if (SKIP.has(clean(text))) return 'ok';
+        const name = findName(eligibleNames(actor, state, member.id, card), text);
+        if (!name) return null;
+        state.defaults[member.id] = {
+          ...state.defaults[member.id],
+          [card ? 'cardName' : 'accountName']: name,
+        };
+        return 'ok';
+      },
+    });
+    steps.push(defaultStep(false, preferences.defaultAccountId));
+    steps.push(defaultStep(true, preferences.defaultCardId));
+    steps.push({
+      id: `renda_conta:${member.id}`,
+      group: 'contas',
+      when: (state) =>
+        state.income[member.id] !== undefined &&
+        eligibleNames(actor, state, member.id, false).length > 1,
+      ask: (state) =>
+        `Em qual conta costuma cair a renda de ${member.name}? Opções: ${eligibleNames(actor, state, member.id, false).join(', ')}.`,
+      apply: (state, text) => {
+        if (SKIP.has(clean(text))) return 'ok';
+        const name = findName(eligibleNames(actor, state, member.id, false), text);
+        if (!name) return null;
+        state.income[member.id]!.accountName = name;
+        return 'ok';
+      },
+    });
   });
   FIXED_BILLS.forEach((bill, index) => {
     steps.push({
@@ -435,6 +596,20 @@ function buildSteps(members: readonly Member[]): Step[] {
         state.goal.savedCents = cents;
       },
     ),
+    {
+      id: 'meta:local',
+      group: 'apartamento',
+      when: (state) => (state.goal.savedCents ?? 0) > 0,
+      ask: (state) =>
+        `Em qual conta ou cofre está esse dinheiro? Opções: ${allAccountNames(actor, state).join(', ') || 'nenhuma cadastrada'}. Ou "não sei".`,
+      apply: (state, text) => {
+        if (SKIP.has(clean(text))) return 'ok';
+        const name = findName(allAccountNames(actor, state), text);
+        if (!name) return null;
+        state.goal.accountName = name;
+        return 'ok';
+      },
+    },
     amountStep(
       'meta:aporte',
       'apartamento',
@@ -451,6 +626,35 @@ function buildSteps(members: readonly Member[]): Step[] {
         state.goal.reserveCents = cents;
       },
     ),
+    {
+      id: 'metas_outras',
+      group: 'apartamento',
+      ask: () =>
+        'Outras metas? Uma por mensagem, ex.: "Viagem 8000" ou "Computador 6000 até 12/2027". Quando terminar, "pronto".',
+      apply: (state, text, today) => {
+        const parsed = parseExtraGoal(text, today);
+        if (!parsed) return null;
+        if ('done' in parsed || !('value' in parsed)) return 'ok';
+        const exists = state.extraGoals.some(
+          (g) => normalizeText(g.name) === normalizeText(parsed.value.name),
+        );
+        if (!exists) state.extraGoals.push(parsed.value);
+        return 'loop';
+      },
+    },
+    {
+      id: 'alertas',
+      group: 'alertas',
+      ask: () =>
+        'Por fim, alertas: "todos", "contas" (só contas e orçamento), "resumos" (só semanal e mensal) ou "nenhum". "Pular" mantém como está.',
+      apply: (state, text) => {
+        const value = clean(text);
+        if (SKIP.has(value) && value !== 'nenhum') return 'ok';
+        if (!['todos', 'contas', 'resumos', 'nenhum'].includes(value)) return null;
+        state.alerts = value as AlertChoice;
+        return 'ok';
+      },
+    },
   );
   return steps;
 }
@@ -514,6 +718,7 @@ function summary(state: OnboardingState, members: readonly Member[]): string {
     lines.push(`• Renda prevista de ${name(memberId)}: ${formatBRL(income.amountCents)}/mês`);
   }
   for (const account of state.accounts) {
+    const owner = account.ownerText ? ` de ${account.ownerText}` : '';
     const detail =
       account.kind === 'credit_card'
         ? account.closingDay && account.dueDay
@@ -522,7 +727,7 @@ function summary(state: OnboardingState, members: readonly Member[]): string {
         : account.openingCents === null
           ? ' (saldo não informado)'
           : ` (saldo ${formatBRL(account.openingCents)})`;
-    lines.push(`• Conta: ${account.name}${detail}`);
+    lines.push(`• Conta: ${account.name}${owner}${detail}`);
   }
   for (const bill of state.bills) {
     lines.push(
@@ -548,6 +753,18 @@ function summary(state: OnboardingState, members: readonly Member[]): string {
       lines.push(`• Reserva de emergência (fora da meta): ${formatBRL(goal.reserveCents)}`);
     }
   }
+  for (const [memberId, chosen] of Object.entries(state.defaults)) {
+    if (chosen.accountName)
+      lines.push(`• Conta principal de ${name(memberId)}: ${chosen.accountName}`);
+    if (chosen.cardName) lines.push(`• Cartão padrão de ${name(memberId)}: ${chosen.cardName}`);
+  }
+  for (const extra of state.extraGoals) {
+    lines.push(
+      `• Meta: ${extra.name}, objetivo ${formatBRL(extra.targetCents)}${extra.deadline ? `, prazo ${extra.deadline}` : ''}`,
+    );
+  }
+  if (state.goal.accountName) lines.push(`• Dinheiro da meta em: ${state.goal.accountName}`);
+  if (state.alerts) lines.push(`• Alertas: ${state.alerts}`);
   if (lines.length === 1) lines.push('• Nada informado ainda.');
   const income = totalIncome(state);
   if (income > 0) {
@@ -556,13 +773,70 @@ function summary(state: OnboardingState, members: readonly Member[]): string {
     );
   }
   lines.push(
-    'Para corrigir uma etapa: /configurar renda, contas, fixas, orcamento ou apartamento.',
+    'Para corrigir uma etapa: /configurar renda, contas, fixas, orcamento, apartamento ou alertas.',
   );
   return lines.join('\n');
 }
 
+/** O que no rascunho conflita com o cadastro atual: mostrado antes de qualquer alteracao. */
+async function contradictions(deps: Deps, actor: Actor, state: OnboardingState): Promise<string[]> {
+  const notes: string[] = [];
+  for (const account of state.accounts) {
+    const found = actor.scope.accounts.find(
+      (a) =>
+        a.normalizedName === normalizeText(account.name) &&
+        a.ownerMemberId === draftOwner(actor, account) &&
+        (a.kind === 'credit_card') === (account.kind === 'credit_card'),
+    );
+    if (found) notes.push(`${found.name} já existe: mantenho o cadastro atual, sem alterar.`);
+  }
+  if (Object.keys(state.income).length > 0) {
+    const entries = await deps.db
+      .select()
+      .from(recurringEntries)
+      .where(
+        and(
+          eq(recurringEntries.householdId, actor.scope.household.id),
+          eq(recurringEntries.kind, 'income'),
+          eq(recurringEntries.active, true),
+        ),
+      );
+    for (const [memberId, income] of Object.entries(state.income)) {
+      const current = entries.find(
+        (e) => e.memberId === memberId && e.normalizedDescription === 'salario',
+      );
+      if (current && current.amountCents !== null && current.amountCents !== income.amountCents) {
+        const member = actor.scope.members.find((m) => m.id === memberId);
+        notes.push(
+          `Renda de ${member?.name}: hoje é ${formatBRL(current.amountCents)}; vou trocar para ${formatBRL(income.amountCents)}.`,
+        );
+      }
+    }
+  }
+  const { accountName, savedCents } = state.goal;
+  if (accountName && savedCents) {
+    const opening =
+      actor.scope.accounts.find((a) => a.name === accountName)?.openingBalanceCents ??
+      state.accounts.find((a) => a.name === accountName)?.openingCents ??
+      null;
+    if (opening !== null && opening < savedCents) {
+      notes.push(
+        `${formatBRL(savedCents)} reservados em ${accountName}, mas o saldo informado é ${formatBRL(opening)}.`,
+      );
+    }
+  }
+  const income = totalIncome(state);
+  const limits = Object.values(state.budgets).reduce((sum, c) => sum + c, 0);
+  if (income > 0 && limits > income - totalBills(state)) {
+    notes.push(
+      `Os limites somam ${formatBRL(limits)}, mais do que sobra depois das contas fixas (${formatBRL(income - totalBills(state))}).`,
+    );
+  }
+  return notes.map((note) => `⚠️ ${note}`);
+}
+
 async function ask(deps: Deps, actor: Actor, state: OnboardingState, prefix = ''): Promise<Effect> {
-  const steps = buildSteps(actor.scope.members.filter((m) => m.status === 'active'));
+  const steps = buildSteps(actor);
   const step = nextStep(steps, state);
   const statements: Stmt[] = [
     closeOpenQuestions(deps, actor),
@@ -575,7 +849,11 @@ async function ask(deps: Deps, actor: Actor, state: OnboardingState, prefix = ''
       statements,
       replies: [
         {
-          text: `${prefix}${summary(state, actor.scope.members)}\nConfirma?`,
+          text: [
+            `${prefix}${summary(state, actor.scope.members)}`,
+            ...(await contradictions(deps, actor, state)),
+            'Confirma?',
+          ].join('\n'),
           buttons: confirmationButtons(pendingId),
         },
       ],
@@ -611,18 +889,25 @@ export async function onboardingCommand(
   if (!session || option === 'refazer') return ask(deps, actor, emptyState());
   if (session.status === 'completed' && option === '') {
     return replyOnly(
-      `${await onboardingChecklist(deps, actor)}\n\nO cadastro guiado já foi concluído. Para refazer: /configurar refazer. Para ajustar uma parte: /configurar renda, contas, fixas, orcamento ou apartamento.`,
+      `${await onboardingChecklist(deps, actor)}\n\nO cadastro guiado já foi concluído. Para refazer: /configurar refazer. Para ajustar uma parte: /configurar renda, contas, fixas, orcamento, apartamento ou alertas.`,
     );
   }
   const state = session.state;
   if ((GROUPS as string[]).includes(option)) {
-    const steps = buildSteps(actor.scope.members);
+    const steps = buildSteps(actor);
     const ids = new Set(steps.filter((s) => s.group === option).map((s) => s.id));
     state.answered = state.answered.filter((id) => !ids.has(id));
-    if (option === 'contas') state.accounts = [];
+    if (option === 'contas') {
+      state.accounts = [];
+      state.defaults = {};
+    }
     if (option === 'fixas') state.bills = [];
     if (option === 'orcamento') state.budgets = {};
-    if (option === 'apartamento') state.goal = {};
+    if (option === 'apartamento') {
+      state.goal = {};
+      state.extraGoals = [];
+    }
+    if (option === 'alertas') delete state.alerts;
     if (option === 'renda') state.income = {};
     return ask(deps, actor, state, 'Vamos refazer essa parte.\n');
   }
@@ -644,7 +929,7 @@ export async function onboardingAnswer(
   if (TRANSACTION_VERBS.test(normalizeText(text))) return null;
   const session = await loadSession(deps, actor.scope.household.id);
   if (!session || session.status !== 'active') return null;
-  const steps = buildSteps(actor.scope.members.filter((m) => m.status === 'active'));
+  const steps = buildSteps(actor);
   const step = steps.find((s) => s.id === stepId);
   if (!step) return null;
   const state = session.state;
@@ -671,37 +956,114 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
     statements.push(...effect.statements);
   };
 
-  if (state.tone) {
+  const alertPresets: Record<AlertChoice, Partial<HouseholdSettings['notifications']>> = {
+    todos: {
+      enabled: true,
+      billReminders: true,
+      budgetAlerts: true,
+      weeklySummary: true,
+      monthlyClosing: true,
+      goalFollowUp: true,
+      behavioralTips: true,
+    },
+    contas: {
+      enabled: true,
+      billReminders: true,
+      budgetAlerts: true,
+      weeklySummary: false,
+      monthlyClosing: false,
+      goalFollowUp: false,
+      behavioralTips: false,
+    },
+    resumos: {
+      enabled: true,
+      billReminders: false,
+      budgetAlerts: false,
+      weeklySummary: true,
+      monthlyClosing: true,
+      goalFollowUp: false,
+      behavioralTips: false,
+    },
+    nenhum: { enabled: false },
+  };
+  if (state.tone || state.alerts) {
+    const settings = {
+      ...actor.scope.settings,
+      ...(state.tone ? { tone: state.tone } : {}),
+      notifications: {
+        ...actor.scope.settings.notifications,
+        ...(state.alerts ? alertPresets[state.alerts] : {}),
+      },
+    };
     statements.push(
       deps.db
         .update(households)
-        .set({ settings: JSON.stringify({ ...actor.scope.settings, tone: state.tone }) })
+        .set({ settings: JSON.stringify(settings) })
         .where(eq(households.id, actor.scope.household.id)),
     );
   }
-  const existing = new Set(actor.scope.accounts.map((a) => a.normalizedName));
-  // Sem conta padrao, cada gasto perguntaria de qual conta saiu.
-  let needsDefault = !actor.scope.accounts.some((a) => a.isDefault);
+
+  // O mesmo nome pode existir para pessoas diferentes: a identidade inclui o dono.
+  const idByName = new Map(actor.scope.accounts.map((a) => [a.name, a.id]));
+  const existingIdentity = new Set(actor.scope.accounts.map((a) => a.identityKey));
+  const skipped: string[] = [];
+  const hasDefault = (memberId: string, card: boolean) => {
+    const member = actor.scope.members.find((m) => m.id === memberId);
+    const preferences = parseMemberPreferences(member?.preferences ?? '{}');
+    return Boolean(card ? preferences.defaultCardId : preferences.defaultAccountId);
+  };
   for (const account of state.accounts) {
-    if (existing.has(normalizeText(account.name))) continue;
-    const isDefault = needsDefault && ['checking', 'joint', 'cash'].includes(account.kind);
-    if (isDefault) needsDefault = false;
+    const ownerId = draftOwner(actor, account);
+    const identity = accountIdentityKey(
+      ownerId ? 'member' : 'shared',
+      ownerId,
+      account.kind,
+      normalizeText(account.name),
+    );
+    if (existingIdentity.has(identity)) {
+      skipped.push(account.name);
+      continue;
+    }
+    const card = account.kind === 'credit_card';
+    const chosen = ownerId ? state.defaults[ownerId]?.[card ? 'cardName' : 'accountName'] : null;
+    const accepted = account.kind !== 'reserve' && account.kind !== 'joint';
+    const isDefault =
+      ownerId !== null &&
+      accepted &&
+      (chosen
+        ? normalizeText(chosen) === normalizeText(account.name)
+        : !hasDefault(ownerId, card) && eligibleNames(actor, state, ownerId, card).length === 1);
+    const id = deps.newId();
+    idByName.set(account.name, id);
     collect(
       await addAccount(deps, actor, {
+        id,
         kind: account.kind,
         name: account.name,
         openingText: money(account.openingCents ?? undefined),
         isDefault,
         closingDay: account.closingDay,
         dueDay: account.dueDay,
-        ownerText: null,
+        ownerText: account.ownerText ?? null,
       }),
       account.name,
     );
   }
+  // Escolha de uma conta que ja existia antes do cadastro.
+  for (const [memberId, chosen] of Object.entries(state.defaults)) {
+    for (const [name, key] of [
+      [chosen.accountName, 'defaultAccountId'],
+      [chosen.cardName, 'defaultCardId'],
+    ] as const) {
+      const account = name ? actor.scope.accounts.find((a) => a.name === name) : undefined;
+      if (account) statements.push(setMemberDefaultStatement(deps, memberId, key, account.id));
+    }
+  }
   for (const [memberId, income] of Object.entries(state.income)) {
     const member = actor.scope.members.find((m) => m.id === memberId);
     if (!member) continue;
+    const options = eligibleNames(actor, state, memberId, false);
+    const accountName = income.accountName ?? (options.length === 1 ? options[0] : undefined);
     collect(
       await addCommitment(deps, actor, {
         kind: 'income',
@@ -711,6 +1073,7 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
         scheduleValue: income.scheduleValue ?? null,
         personText: member.name,
         categoryText: 'salario',
+        accountId: accountName ? (idByName.get(accountName) ?? null) : null,
       }),
       `renda de ${member.name}`,
     );
@@ -746,8 +1109,19 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
         plannedMonthly: money(goal.monthlyCents),
         emergencyReserve: money(goal.reserveCents),
         initialConfirmed: goal.savedCents ? money(goal.savedCents) : null,
+        linkedAccountId: goal.accountName ? (idByName.get(goal.accountName) ?? null) : null,
       }),
       'meta',
+    );
+  }
+  for (const extra of state.extraGoals) {
+    collect(
+      await createGoal(deps, actor, {
+        name: extra.name,
+        targetText: formatBRL(extra.targetCents).replace('R$ ', ''),
+        deadlineText: extra.deadline,
+      }),
+      `meta ${extra.name}`,
     );
   }
   statements.push(
@@ -757,6 +1131,7 @@ export async function applyOnboarding(deps: Deps, actor: Actor, extra: Stmt[]): 
   const text = [
     'Configuração ativada ✅',
     ...(problems.length ? ['Não consegui aplicar:', ...problems.map((p) => `• ${p}`)] : []),
+    ...(skipped.length ? [`Já existiam e ficaram como estavam: ${skipped.join(', ')}.`] : []),
     'Veja o que ainda falta com /configurar status. A partir daqui é só lançar os gastos normalmente.',
   ].join('\n');
   return { statements, replies: [{ text }] };

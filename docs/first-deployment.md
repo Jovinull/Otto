@@ -244,6 +244,20 @@ pnpm deploy:prod
 pnpm doctor -- --remote
 ```
 
+### Atualização para contas, metas e reservas (migrações 0003 e 0004)
+
+O código novo exige as colunas novas, e o merge publica o Worker sozinho. Por isso a ordem é:
+
+1. Faça um backup (seção 17).
+2. Aplique as migrações **antes** do merge: `pnpm db:migrate:prod`.
+3. Faça o merge. As migrações só acrescentam colunas e tabelas; o Worker antigo continua
+   funcionando no intervalo.
+4. Defina o dono das contas antigas: elas chegam sem dono e o Otto pergunta qual usar até você
+   rodar `/editconta Nome dono=Felipe` (ou `dono=casal`) e `/contapadrao Nome`.
+
+Para reverter o código, basta voltar o Worker: as colunas novas são ignoradas pela versão
+anterior.
+
 ## 20. Interromper o bot sem perder dados
 
 1. No grupo: `/notificacoes off` (para as mensagens automáticas).
