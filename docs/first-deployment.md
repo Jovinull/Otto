@@ -253,7 +253,7 @@ O código novo exige as colunas novas, e o merge publica o Worker sozinho. Por i
 3. Faça o merge. As migrações só acrescentam colunas e tabelas; o Worker antigo continua
    funcionando no intervalo.
 4. Defina o dono das contas antigas: elas chegam sem dono e o Otto pergunta qual usar até você
-   rodar `/editconta Nome dono=Felipe` (ou `dono=casal`) e `/contapadrao Nome`.
+   rodar `/editconta Nome dono=Pessoa` (ou `dono=casal`) e `/contapadrao Nome`.
 
 Para reverter o código, basta voltar o Worker: as colunas novas são ignoradas pela versão
 anterior.

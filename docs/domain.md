@@ -70,7 +70,7 @@ despesa. Cartão segue a mesma ideia com o cartão padrão de quem pagou.
 **Crédito.** Crédito explícito sem número de parcelas é uma parcela só. "Comprei por R$ 90" sem
 falar em cartão não é crédito. A divisão de parcelas é exata em centavos.
 
-**Limite não é dinheiro.** Limite e disponível informados aparecem em `/meuscartoes` e nunca
+**Limite não é dinheiro.** Limite e disponível informados aparecem em `/minhascontas` e nunca
 entram em saldo ou patrimônio. Dívida informada no cadastro entra na fatura do período.
 
 **Faturas e parcelas.** Pagar fatura é transferência, não despesa nova: a compra já contou no dia
