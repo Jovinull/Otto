@@ -362,6 +362,10 @@ export interface CommitmentInput {
   scheduleValue: number | null;
   personText: string | null;
   categoryText: string | null;
+  /** Conta onde a renda costuma cair. */
+  accountId?: string | null;
+  /** irregular: fonte cadastrada, fora da renda prevista do mes. */
+  frequency?: 'monthly' | 'irregular';
 }
 
 export function normalizedRecurringName(description: string): string {
@@ -420,6 +424,8 @@ export async function addCommitment(
     scheduleType: input.scheduleType,
     scheduleValue: input.scheduleValue,
     categoryId: category?.id ?? existing?.categoryId ?? null,
+    accountId: input.accountId ?? existing?.accountId ?? null,
+    frequency: input.frequency ?? existing?.frequency ?? ('monthly' as const),
   };
   const id = existing?.id ?? deps.newId();
   const statements: Stmt[] = [

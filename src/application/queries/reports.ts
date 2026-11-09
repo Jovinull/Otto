@@ -299,7 +299,7 @@ export async function incomeForecastReport(
     loadCommitments(deps.db, scope.household.id, period),
     cashFlow(deps.db, scope.household.id, monthRange(period)),
   ]);
-  const incomes = commitments.filter((c) => c.kind === 'income');
+  const incomes = commitments.filter((c) => c.kind === 'income' && c.frequency === 'monthly');
   if (incomes.length === 0) {
     return `Não tenho renda prevista cadastrada para ${monthName(period)}. Use /renda 4200 util=5, por exemplo. Recebido confirmado no mês: ${formatBRL(flow.incomeCents)}.`;
   }
@@ -547,7 +547,7 @@ export async function commitmentLoad(
     loadCommitments(deps.db, scope.household.id, period),
     futureInstallments(deps.db, scope.household.id),
   ]);
-  const incomes = commitments.filter((c) => c.kind === 'income');
+  const incomes = commitments.filter((c) => c.kind === 'income' && c.frequency === 'monthly');
   const expenses = commitments.filter((c) => c.kind === 'expense');
   return {
     expectedIncomeCents: incomes.reduce((sum, c) => sum + (c.amountCents ?? 0), 0),

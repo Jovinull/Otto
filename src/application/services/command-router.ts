@@ -36,6 +36,18 @@ import {
   removeRecurring,
   requestArchiveAccount,
 } from '../commands/editing';
+import { configureIncome, receiveIncome } from '../commands/income';
+import {
+  accountFreeReport,
+  coupleStatus,
+  incomeSourcesReport,
+  myAccountsReport,
+  myBalancesReport,
+  myCardsReport,
+  myGoalsReport,
+  personalStatus,
+  resolveMember,
+} from '../queries/status';
 import type { GoalMovement } from '../commands/goals';
 import { createGoal, editGoal, moveGoalFunds, requestGoalRemoval } from '../commands/goals';
 import { reportBalance } from '../commands/reconcile';
@@ -193,6 +205,7 @@ const WRITE_COMMANDS = new Set([
   'desfazer_aporte',
   'recorrente',
   'renda',
+  'recebi',
   'addconta',
   'addcategoria',
   'padrao',
@@ -439,18 +452,58 @@ export async function handleCommand(
     }
     case 'renda': {
       const amountText = rest[0];
-      if (!amountText) return replyOnly('Formato: /renda 4200 dia=5 ou /renda 4200 util=5');
-      const schedule = scheduleFromOptions(options);
+      if (!amountText) {
+        return replyOnly(
+          'Formato: /renda 4200 dia=5 @Conta [nome=Freelance] [de=Nome] [irregular]. Use util=5 para dia útil.',
+        );
+      }
+      const irregular = rest.slice(1).some((t) => normalizeText(t) === 'irregular');
+      const schedule = irregular
+        ? { scheduleType: 'monthly_unspecified' as const, scheduleValue: null }
+        : scheduleFromOptions(options);
       if (typeof schedule === 'string') return replyOnly(schedule);
-      return addCommitment(deps, actor, {
-        kind: 'income',
-        description: 'Salário',
-        amountText,
+      const accountToken = args.find((t) => t.startsWith('@') && t.length > 1);
+      return configureIncome(deps, actor, {
+        amountText: amountText === '?' ? null : amountText,
+        name: options.get('nome') ?? null,
         ...schedule,
-        personText: actor.member.name,
-        categoryText: 'salario',
+        accountText: accountToken ? accountToken.slice(1) : null,
+        personText: options.get('de')?.replaceAll('_', ' ') ?? null,
+        irregular,
       });
     }
+    case 'rendas':
+      return replyOnly(await incomeSourcesReport(deps, actor));
+    case 'recebi': {
+      const tokens = rest.filter((t) => !t.startsWith('@'));
+      const amountIndex = tokens.findIndex((t) => parseBRL(t).status === 'ok');
+      const accountToken = args.find((t) => t.startsWith('@') && t.length > 1);
+      return receiveIncome(deps, actor, {
+        nameText: tokens.filter((_, i) => i !== amountIndex).join(' ') || null,
+        amountText: amountIndex >= 0 ? tokens[amountIndex]! : null,
+        accountText: accountToken ? accountToken.slice(1) : null,
+        personText: options.get('de')?.replaceAll('_', ' ') ?? null,
+        dateText: null,
+      });
+    }
+    case 'statuspessoal':
+    case 'minhascontas':
+    case 'meusaldos':
+    case 'meuscartoes':
+    case 'minhasmetas': {
+      const member = resolveMember(actor, rest.join(' ') || null);
+      if (typeof member === 'string') return replyOnly(member);
+      if (command === 'statuspessoal') return replyOnly(await personalStatus(deps, actor, member));
+      if (command === 'minhascontas') return replyOnly(await myAccountsReport(deps, actor, member));
+      if (command === 'meusaldos') return replyOnly(await myBalancesReport(deps, actor, member));
+      if (command === 'meuscartoes') return replyOnly(await myCardsReport(deps, actor, member));
+      return replyOnly(await myGoalsReport(deps, actor, member));
+    }
+    case 'statuscasal':
+      return replyOnly(await coupleStatus(deps, actor));
+    case 'livre':
+      if (rest.length === 0) return replyOnly('Formato: /livre CONTA');
+      return replyOnly(await accountFreeReport(deps, actor, rest.join(' ')));
     case 'addconta': {
       const kind =
         ACCOUNT_KIND_ALIASES[normalizeText(rest[0] ?? '') as keyof typeof ACCOUNT_KIND_ALIASES];

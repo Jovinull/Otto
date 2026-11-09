@@ -284,6 +284,8 @@ export interface CommitmentView {
   expected: ExpectedDate;
   settled: boolean;
   memberId: string | null;
+  accountId: string | null;
+  frequency: 'monthly' | 'irregular';
 }
 
 export async function loadCommitments(
@@ -314,6 +316,8 @@ export async function loadCommitments(
       expected: expectedDate(entry, period),
       settled: settled.has(entry.id),
       memberId: entry.memberId,
+      accountId: entry.accountId,
+      frequency: entry.frequency,
     }))
     .sort((a, b) => (a.expected.date ?? '9999').localeCompare(b.expected.date ?? '9999'));
 }

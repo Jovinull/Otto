@@ -130,7 +130,7 @@ export async function onboardingChecklist(deps: Deps, actor: Actor): Promise<str
     loadBudgetViews(deps.db, scope, period),
     loadGoals(deps.db, scope.household.id, actor.today),
   ]);
-  const incomes = commitments.filter((c) => c.kind === 'income');
+  const incomes = commitments.filter((c) => c.kind === 'income' && c.frequency === 'monthly');
   const bills = commitments.filter((c) => c.kind === 'expense');
   const goal = goals.find((g) => g.kind === 'apartment');
   const members = scope.members.filter((m) => m.status === 'active');

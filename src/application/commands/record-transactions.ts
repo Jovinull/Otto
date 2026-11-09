@@ -26,6 +26,7 @@ import { ledgerContext, replyOnly } from '../context';
 import type { BudgetView, ExtraExpense } from '../queries/finance';
 import { accountBalances, loadBudgetViews, shortId } from '../queries/finance';
 import { reservedShortfall } from './goals';
+import { prepareIncomeDrafts } from './income';
 import {
   budgetNudge,
   incomeOpener,
@@ -235,7 +236,7 @@ function transactionLine(actor: Actor, transaction: ResolvedTransaction, id: str
 }
 
 /** Soma dos lancamentos confirmados do mes que correspondem a recorrencia. */
-async function matchedAmountInPeriod(
+export async function matchedAmountInPeriod(
   deps: Deps,
   actor: Actor,
   entry: typeof recurringEntries.$inferSelect,
@@ -450,12 +451,19 @@ async function budgetFollowUp(
 export async function recordDrafts(
   deps: Deps,
   actor: Actor,
-  drafts: TransactionDraft[],
+  received: TransactionDraft[],
   options: RecordOptions,
 ): Promise<Effect> {
   const context = ledgerContext(actor);
   const resolved: ResolvedTransaction[] = [];
   const reservedNotes: string[] = [];
+
+  const income =
+    options.origin !== 'confirmation' && received.some((d) => d.kind === 'income')
+      ? await prepareIncomeDrafts(deps, actor, received)
+      : null;
+  if (income?.stop) return income.stop;
+  const drafts = income?.drafts ?? received;
 
   for (let index = 0; index < drafts.length; index++) {
     const outcome = resolveDraft(drafts[index]!, context);
@@ -490,7 +498,7 @@ export async function recordDrafts(
     resolved.push(outcome.transaction);
   }
 
-  let confirmationReason = options.confirmationReason ?? null;
+  let confirmationReason = options.confirmationReason ?? income?.reason ?? null;
   const spendingAccounts = resolved.filter(
     (t) => t.sourceAccountId !== null && !t.isCreditPurchase,
   );
