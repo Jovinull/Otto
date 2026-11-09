@@ -35,6 +35,9 @@ const GOAL = {
   initial_confirmed_text: null,
   contribution_text: null,
   contribution_date_text: null,
+  goal_name: null,
+  account_text: null,
+  source_account_text: null,
 };
 
 /** Completa a interpretacao ideal com os valores nulos exigidos pelo schema estrito. */

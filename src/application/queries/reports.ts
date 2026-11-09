@@ -10,6 +10,8 @@ import {
   weekRange,
 } from '../../shared/dates';
 import { formatBRL, percentOf } from '../../shared/money';
+import { computeAvailability } from '../../domain/goals/goal';
+import { findGoal } from '../commands/goals';
 import type { Deps, Scope } from '../context';
 import type { CategoryTotal, GoalView } from './finance';
 import {
@@ -105,43 +107,58 @@ export async function balancesReport(deps: Deps, scope: Scope): Promise<string> 
     accountBalances(deps.db, scope),
     loadGoals(deps.db, scope.household.id, '9999-12-31'),
   ]);
+  const ownerName = (ownerId: string | null, ownership: string) =>
+    ownerId
+      ? (scope.members.find((m) => m.id === ownerId)?.name ?? 'Membro')
+      : ownership === 'shared'
+        ? 'casal'
+        : 'sem dono';
   const lines = ['Contas (saldos conhecidos pelo Otto, sem integração com o banco):'];
   let knownCash = 0;
+  let knownReserved = 0;
   let unknownCount = 0;
   let cardDebt = 0;
   for (const account of balances) {
+    const owner = ownerName(account.ownerMemberId, account.ownership);
     if (account.kind === 'credit_card') {
       const balance = account.balanceCents ?? 0;
       cardDebt += Math.max(-balance, 0);
       lines.push(
         balance > 0
-          ? `💳 ${account.name}: crédito a favor ${formatBRL(balance)}`
-          : `💳 ${account.name}: dívida em aberto ${formatBRL(-balance)}`,
+          ? `💳 ${account.name} (${owner}): crédito a favor ${formatBRL(balance)}`
+          : `💳 ${account.name} (${owner}): dívida em aberto ${formatBRL(-balance)}`,
       );
-    } else if (account.balanceCents === null) {
+      continue;
+    }
+    const icon = account.kind === 'reserve' ? '🛟' : '•';
+    const { freeCents } = computeAvailability(account);
+    if (account.balanceCents === null) {
       unknownCount += 1;
       lines.push(
-        `• ${account.name}: saldo inicial desconhecido; movimentado aqui ${formatBRL(account.netMovementCents)}`,
+        `${icon} ${account.name} (${owner}): saldo inicial desconhecido; movimentado aqui ${formatBRL(account.netMovementCents)}${account.allocatedCents > 0 ? ` · reservado ${formatBRL(account.allocatedCents)}, sem como validar` : ''}`,
       );
-    } else {
-      if (account.kind !== 'reserve') knownCash += account.balanceCents;
-      lines.push(
-        `${account.kind === 'reserve' ? '🛟' : '•'} ${account.name}: ${formatBRL(account.balanceCents)}`,
-      );
+      continue;
     }
+    knownCash += account.balanceCents;
+    knownReserved += account.allocatedCents;
+    lines.push(
+      `${icon} ${account.name} (${owner}): ${formatBRL(account.balanceCents)}${account.allocatedCents > 0 ? ` · reservado ${formatBRL(account.allocatedCents)} · livre ${formatBRL(freeCents!)}` : ''}`,
+    );
   }
   if (unknownCount === 0) {
-    lines.push(`Em contas, fora reservas: ${formatBRL(knownCash)}`);
+    lines.push(`Patrimônio em contas: ${formatBRL(knownCash)}`);
   } else {
     lines.push('Não dá para afirmar o total em contas: falta saldo inicial de alguma conta.');
   }
-  if (cardDebt > 0)
+  if (knownReserved > 0)
+    lines.push(`Reservado para metas nessas contas: ${formatBRL(knownReserved)}`);
+  if (cardDebt > 0) {
     lines.push(`Dívida total nos cartões (inclui parcelas futuras): ${formatBRL(cardDebt)}`);
+  }
+  const located = balances.reduce((sum, b) => sum + b.allocatedCents, 0);
   const earmarked = goals.reduce((sum, goal) => sum + Math.max(goal.progress.confirmedCents, 0), 0);
-  if (earmarked > 0) {
-    lines.push(
-      `Separado para metas (confirmado): ${formatBRL(earmarked)}. Se está numa dessas contas, não é dinheiro livre.`,
-    );
+  if (earmarked > located) {
+    lines.push(`Reservado sem local informado: ${formatBRL(earmarked - located)}.`);
   }
   lines.push(
     'Saldo em conta não é o mesmo que livre para gastar: veja /compromissos e /orcamento.',
@@ -180,45 +197,68 @@ export async function budgetsReport(
 
 function goalLines(goal: GoalView): string[] {
   const { progress } = goal;
-  const lines = [`🏠 ${goal.name}`];
-  lines.push(`Guardado e confirmado: ${formatBRL(progress.confirmedCents)}`);
+  const icon = goal.kind === 'apartment' ? '🏠' : '🎯';
+  const lines = [`Meta: ${goal.name} ${icon}`];
   if (progress.targetCents === null) {
-    lines.push('Valor-alvo ainda não definido. Use /meta entrada=VALOR custos=VALOR.');
-    return lines;
-  }
-  lines.push(
-    `Alvo: ${formatBRL(progress.targetCents)} · Progresso: ${progress.percent}% · Falta: ${formatBRL(progress.remainingCents ?? 0)}`,
-  );
-  if (progress.requiredMonthlyCents !== null && progress.monthsToDeadline !== null) {
+    lines.push(`Reservado: ${formatBRL(progress.confirmedCents)}`);
     lines.push(
-      `Para o prazo (${monthName(periodOf(goal.deadline!))}): ${formatBRL(progress.requiredMonthlyCents)}/mês por ${progress.monthsToDeadline} meses.`,
+      goal.kind === 'apartment'
+        ? 'Valor-alvo ainda não definido. Use /meta entrada=VALOR custos=VALOR.'
+        : `Valor-alvo ainda não definido. Use /meta editar ${goal.name} valor=VALOR.`,
     );
-  } else if (goal.deadline) {
-    lines.push('O prazo informado já passou.');
+  } else {
+    lines.push(`Objetivo: ${formatBRL(progress.targetCents)}`);
+    lines.push(`Reservado: ${formatBRL(progress.confirmedCents)}`);
+    lines.push(`Progresso: ${progress.percent}%`);
+    lines.push(`Faltam: ${formatBRL(progress.remainingCents ?? 0)}`);
+    if (progress.requiredMonthlyCents !== null && progress.monthsToDeadline !== null) {
+      lines.push(
+        `Para o prazo (${monthName(periodOf(goal.deadline!))}): ${formatBRL(progress.requiredMonthlyCents)}/mês por ${progress.monthsToDeadline} meses.`,
+      );
+    } else if (goal.deadline) {
+      lines.push('O prazo informado já passou.');
+    }
   }
   if (progress.plannedMonthlyCents !== null) {
     lines.push(
-      `Aporte pretendido: ${formatBRL(progress.plannedMonthlyCents)}/mês · Realizado neste mês: ${formatBRL(progress.confirmedThisMonthCents)}`,
+      `Aporte planejado: ${formatBRL(progress.plannedMonthlyCents)}/mês · Realizado neste mês: ${formatBRL(progress.confirmedThisMonthCents)}`,
     );
     if (progress.projectedCompletion) {
-      lines.push(`No ritmo pretendido, chega em ${monthName(progress.projectedCompletion)}.`);
+      lines.push(`No ritmo planejado, chega em ${monthName(progress.projectedCompletion)}.`);
     }
+  }
+  if (goal.locations.length > 0) {
+    lines.push(
+      `Onde está: ${goal.locations.map((l) => `${l.accountName} ${formatBRL(l.cents)}`).join(' · ')}`,
+    );
   }
   if (goal.emergencyReserveCents !== null) {
     lines.push(
       `Reserva de emergência (separada da meta): ${formatBRL(goal.emergencyReserveCents)}`,
     );
   }
-  lines.push('Projeção ignora rendimentos.');
+  if (goal.notes) lines.push(`Obs.: ${goal.notes}`);
+  if (progress.targetCents !== null) lines.push('Projeção ignora rendimentos.');
   return lines;
 }
 
 export async function goalReport(deps: Deps, scope: Scope, today: LocalDate): Promise<string> {
   const goals = await loadGoals(deps.db, scope.household.id, today);
   if (goals.length === 0) {
-    return 'Meta do apartamento ainda não criada. Comece com: /meta entrada=VALOR custos=VALOR prazo=MM/AAAA aporte=VALOR';
+    return 'Nenhuma meta ainda. Comece com: /meta criar Viagem valor=8000 ou /meta entrada=VALOR para o apartamento.';
   }
-  return goals.flatMap(goalLines).join('\n');
+  return goals.map((goal) => goalLines(goal).join('\n')).join('\n\n');
+}
+
+export async function singleGoalReport(
+  deps: Deps,
+  scope: Scope,
+  today: LocalDate,
+  name: string,
+): Promise<string> {
+  const goals = await loadGoals(deps.db, scope.household.id, today);
+  const found = findGoal(goals, name);
+  return 'error' in found ? found.error : goalLines(found.goal).join('\n');
 }
 
 export async function billsReport(deps: Deps, scope: Scope, period: Period): Promise<string> {

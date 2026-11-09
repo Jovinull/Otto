@@ -9,6 +9,7 @@ import {
   recurringEntries,
 } from '../../infrastructure/database/schema';
 import { formatBRL, parseBRL } from '../../shared/money';
+import { accountBalances } from '../queries/finance';
 import { normalizeText } from '../../shared/text';
 import type { Account, Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
@@ -225,9 +226,22 @@ export function editAccount(
   };
 }
 
-export function requestArchiveAccount(deps: Deps, actor: Actor, accountName: string): Effect {
+export async function requestArchiveAccount(
+  deps: Deps,
+  actor: Actor,
+  accountName: string,
+): Promise<Effect> {
   const lookup = findAccount(actor, accountName);
   if ('error' in lookup) return replyOnly(lookup.error);
+  const position = (await accountBalances(deps.db, actor.scope)).find(
+    (p) => p.id === lookup.account.id,
+  );
+  if (position && position.allocatedCents > 0) {
+    const goals = position.allocations.map((a) => a.goalName).join(', ');
+    return replyOnly(
+      `${lookup.account.name} tem ${formatBRL(position.allocatedCents)} reservados para ${goals}. Libere com /retirada antes de arquivar.`,
+    );
+  }
   const pendingId = deps.newId();
   return {
     statements: [

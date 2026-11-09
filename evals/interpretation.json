@@ -245,7 +245,7 @@
       "text": "Guardei 500 pro apartamento.",
       "setup": ["/meta entrada=80000"],
       "golden": { "intent": "register_goal_contribution", "goal": { "contribution_text": "500" } },
-      "expect": { "intents": ["register_goal_contribution"], "write": "config" }
+      "expect": { "intents": ["register_goal_contribution"], "write": "none" }
     },
     {
       "id": "bom-dia",

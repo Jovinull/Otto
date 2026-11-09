@@ -51,16 +51,16 @@ describe('saldos sem dinheiro disponivel enganoso', () => {
     await h.say('/contas');
     const text = h.messaging.last();
     expect(text).not.toContain('Disponível');
-    expect(text).toContain('Em contas, fora reservas: R$ 1.000,00');
+    expect(text).toContain('Patrimônio em contas: R$ 1.500,00');
     expect(text).toContain('Dívida total nos cartões (inclui parcelas futuras): R$ 300,00');
-    expect(text).toContain('Separado para metas (confirmado): R$ 400,00');
+    expect(text).toContain('Reservado sem local informado: R$ 400,00');
   });
 
   it('pagamento a mais no cartao aparece como credito, nao some', async () => {
     await h.say('/gasto 100 sapato cartao @Nubank');
     await h.say('/pagar_fatura 150 Principal para Nubank');
     await h.say('/contas');
-    expect(h.messaging.last()).toContain('Nubank: crédito a favor R$ 50,00');
+    expect(h.messaging.last()).toContain('Nubank (Felipe): crédito a favor R$ 50,00');
   });
 
   it('transferencia para a reserva lembra que nao e aporte', async () => {
@@ -79,8 +79,8 @@ describe('saldos sem dinheiro disponivel enganoso', () => {
     await h.say(`/estornar ${payment!.id.replaceAll('-', '').slice(0, 6)}`);
     await h.press(buttonData(h.messaging, 'c'));
     await h.say('/contas');
-    expect(h.messaging.last()).toContain('Nubank: dívida em aberto R$ 300,00');
-    expect(h.messaging.last()).toContain('Principal: R$ 1.000,00');
+    expect(h.messaging.last()).toContain('Nubank (Felipe): dívida em aberto R$ 300,00');
+    expect(h.messaging.last()).toContain('Principal (Felipe): R$ 1.000,00');
   });
 
   it('parcelamento estornado deixa de ser compromisso futuro', async () => {

@@ -236,6 +236,16 @@ export async function applyVoid(
         .update(installmentPlans)
         .set({ status: 'cancelled' })
         .where(eq(installmentPlans.transactionId, transaction.id)),
+      // A reserva feita por esta transferencia deixa de existir junto com ela.
+      deps.db
+        .update(goalContributions)
+        .set({ status: 'voided' })
+        .where(
+          and(
+            eq(goalContributions.transactionId, transaction.id),
+            eq(goalContributions.status, 'confirmed'),
+          ),
+        ),
       auditStatement(deps, actor, 'transaction.voided', 'transaction', transaction.id, {
         before: { status: 'confirmed', amountCents: transaction.amountCents },
         after: { status: 'voided' },
@@ -280,6 +290,7 @@ export async function applyContributionVoid(
     .limit(1);
   const contribution = rows[0];
   if (!contribution) return { statements: extra, replies: [{ text: 'Aporte não encontrado.' }] };
+  const now = deps.now();
   return {
     statements: [
       ...extra,
@@ -287,6 +298,26 @@ export async function applyContributionVoid(
         .update(goalContributions)
         .set({ status: 'voided' })
         .where(eq(goalContributions.id, contribution.id)),
+      // O aporte com transferencia desfaz tambem o movimento entre as contas.
+      ...(contribution.transactionId
+        ? [
+            deps.db
+              .update(tx)
+              .set({
+                status: 'voided',
+                voidedAt: now,
+                voidedByMemberId: actor.member.id,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(tx.id, contribution.transactionId),
+                  eq(tx.householdId, householdId),
+                  eq(tx.status, 'confirmed'),
+                ),
+              ),
+          ]
+        : []),
       auditStatement(
         deps,
         actor,
@@ -299,6 +330,10 @@ export async function applyContributionVoid(
         },
       ),
     ],
-    replies: [{ text: `Aporte de ${formatBRL(contribution.amountCents)} desfeito.` }],
+    replies: [
+      {
+        text: `Aporte de ${formatBRL(contribution.amountCents)} desfeito.${contribution.transactionId ? ' A transferência entre as contas também foi desfeita.' : ''}`,
+      },
+    ],
   };
 }

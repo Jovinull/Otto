@@ -12,14 +12,13 @@ import {
   installments,
 } from '../../infrastructure/database/schema';
 import { parseMonthExpression, periodOf } from '../../shared/dates';
-import { formatBRL } from '../../shared/money';
+import { formatBRL, parseBRL } from '../../shared/money';
 import { normalizeText } from '../../shared/text';
 import { correctTransaction, requestVoid } from '../commands/corrections';
 import {
   addAccount,
   addCategory,
   addCommitment,
-  addGoalContribution,
   findCategoryByText,
   findMember,
   markNextInstallmentPaid,
@@ -37,6 +36,9 @@ import {
   removeRecurring,
   requestArchiveAccount,
 } from '../commands/editing';
+import type { GoalMovement } from '../commands/goals';
+import { createGoal, editGoal, moveGoalFunds, requestGoalRemoval } from '../commands/goals';
+import { reportBalance } from '../commands/reconcile';
 import { recordDrafts } from '../commands/record-transactions';
 import { auditStatement } from '../commands/shared';
 import type { Actor, Deps, Effect } from '../context';
@@ -48,6 +50,7 @@ import {
   budgetsReport,
   comparisonReport,
   goalReport,
+  singleGoalReport,
   incomeForecastReport,
   monthReport,
   peopleReport,
@@ -184,6 +187,8 @@ const WRITE_COMMANDS = new Set([
   'orcamento',
   'meta',
   'aporte',
+  'alocar',
+  'saldo',
   'retirada',
   'desfazer_aporte',
   'recorrente',
@@ -342,7 +347,45 @@ export async function handleCommand(
         options.get('de') ?? null,
       );
     }
-    case 'meta':
+    case 'meta': {
+      const action = normalizeText(rest[0] ?? '');
+      if (action === 'criar' || action === 'nova') {
+        const name = rest.slice(1).join(' ');
+        if (!name)
+          return replyOnly(
+            'Formato: /meta criar NOME valor=VALOR [prazo=MM/AAAA] [aporte=VALOR] [dono=Nome]',
+          );
+        return createGoal(deps, actor, {
+          name,
+          targetText: options.get('valor') ?? null,
+          deadlineText: options.get('prazo') ?? null,
+          plannedText: options.get('aporte') ?? null,
+          ownerText: options.get('dono') ?? null,
+          notes: options.get('nota')?.replaceAll('_', ' ') ?? null,
+        });
+      }
+      if (action === 'editar') {
+        const name = rest.slice(1).join(' ');
+        if (!name)
+          return replyOnly(
+            'Formato: /meta editar NOME [valor=] [prazo=] [aporte=] [nome=] [nota=]',
+          );
+        return editGoal(deps, actor, name, {
+          name: options.get('nome'),
+          target: options.get('valor'),
+          deadline: options.get('prazo'),
+          planned: options.get('aporte'),
+          notes: options.get('nota'),
+        });
+      }
+      if (action === 'remover') {
+        if (rest.length < 2) return replyOnly('Formato: /meta remover NOME');
+        return requestGoalRemoval(deps, actor, rest.slice(1).join(' '));
+      }
+      if (rest.length > 0) {
+        const name = action === 'status' ? rest.slice(1).join(' ') : rest.join(' ');
+        return replyOnly(await singleGoalReport(deps, scope, actor.today, name));
+      }
       if (options.size === 0) return replyOnly(await goalReport(deps, scope, actor.today));
       return updateApartmentGoal(deps, actor, {
         entry: options.get('entrada') ?? null,
@@ -353,17 +396,19 @@ export async function handleCommand(
         initialConfirmed: options.get('inicial') ?? null,
         notes: options.get('nota') ?? null,
       });
+    }
     case 'aporte':
+    case 'alocar':
     case 'retirada': {
-      if (!rest[0]) return replyOnly(`Formato: /${command} 500`);
-      return addGoalContribution(
-        deps,
-        actor,
-        rest[0],
-        command === 'aporte' ? 'in' : 'out',
-        rest[1] ?? null,
-        actor.eventId,
-      );
+      const movement = parseGoalMovement(command, args);
+      if (typeof movement === 'string') return replyOnly(movement);
+      return moveGoalFunds(deps, actor, movement, actor.eventId);
+    }
+    case 'saldo': {
+      const amount = rest.at(-1);
+      if (rest.length < 2 || !amount)
+        return replyOnly('Formato: /saldo CONTA VALOR, ex.: /saldo Nubank 830,00');
+      return reportBalance(deps, actor, rest.slice(0, -1).join(' '), amount);
     }
     case 'desfazer_aporte':
       if (!rest[0]) return replyOnly('Formato: /desfazer_aporte CODIGO');
@@ -617,6 +662,38 @@ function defaultAccountCommand(
       }),
     ],
     replies: [{ text: `${noun} de ${member.name}: ${target.name}.` }],
+  };
+}
+
+/** /aporte [META] VALOR [@Conta] [de:Origem] [data]. Sem meta, vale a do apartamento. */
+function parseGoalMovement(command: string, args: readonly string[]): GoalMovement | string {
+  const usage = `Formato: /${command} META VALOR [@Conta]${command === 'retirada' ? '' : ' [de:Origem]'}`;
+  const tokens = [...args];
+  const amountIndex = tokens.findIndex((t) => {
+    const parsed = parseBRL(t.replace(/^r\$/i, ''));
+    return parsed.status === 'ok' && !t.startsWith('@') && !DATE_TOKEN.test(t);
+  });
+  if (amountIndex < 0) return usage;
+  const goalText = tokens.slice(0, amountIndex).join(' ') || null;
+  let accountText: string | null = null;
+  let sourceAccountText: string | null = null;
+  let dateText: string | null = null;
+  for (const token of tokens.slice(amountIndex + 1)) {
+    if (token.startsWith('@') && token.length > 1) accountText = token.slice(1);
+    else if (normalizeText(token).startsWith('de:') && token.length > 3) {
+      sourceAccountText = token.slice(3);
+    } else if (DATE_TOKEN.test(token)) dateText = token;
+    else return usage;
+  }
+  return {
+    goalText,
+    amountText: tokens[amountIndex]!,
+    direction: command === 'retirada' ? 'out' : 'in',
+    accountText,
+    sourceAccountText,
+    dateText,
+    kind: command === 'alocar' ? 'allocation' : 'contribution',
+    requireLocation: false,
   };
 }
 

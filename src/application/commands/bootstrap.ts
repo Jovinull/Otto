@@ -95,6 +95,7 @@ const EXPORT_TABLES = {
   budgets: schema.budgets,
   financial_goals: schema.financialGoals,
   goal_contributions: schema.goalContributions,
+  balance_reconciliations: schema.balanceReconciliations,
   recurring_entries: schema.recurringEntries,
   audit_events: schema.auditEvents,
 } as const;
@@ -219,6 +220,9 @@ export async function eraseHousehold(deps: Deps, householdId: string): Promise<v
     db.delete(schema.aiUsage).where(eq(schema.aiUsage.householdId, householdId)),
     db.delete(schema.incomingEvents).where(eq(schema.incomingEvents.householdId, householdId)),
     db.delete(schema.outgoingMessages).where(eq(schema.outgoingMessages.householdId, householdId)),
+    db
+      .delete(schema.balanceReconciliations)
+      .where(eq(schema.balanceReconciliations.householdId, householdId)),
     db
       .delete(schema.financialAccounts)
       .where(eq(schema.financialAccounts.householdId, householdId)),

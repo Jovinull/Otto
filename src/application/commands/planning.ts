@@ -24,13 +24,12 @@ import {
   monthName,
   monthRange,
   periodOf,
-  resolveDateExpression,
 } from '../../shared/dates';
 import { formatBRL, parseBRL } from '../../shared/money';
 import { normalizeText } from '../../shared/text';
 import type { Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
-import { loadBudgetViews, loadGoals, shortId, sumExpenses } from '../queries/finance';
+import { loadBudgetViews, shortId, sumExpenses } from '../queries/finance';
 import {
   alertStatementsFor,
   createPendingStatement,
@@ -177,7 +176,7 @@ async function apartmentGoal(deps: Deps, householdId: string) {
   return rows[0] ?? null;
 }
 
-function parseDeadline(value: string, today: LocalDate): LocalDate | null {
+export function parseDeadline(value: string, today: LocalDate): LocalDate | null {
   const monthYear = /^(\d{1,2})[/-](\d{4})$/.exec(value.trim());
   if (monthYear) {
     const month = Number(monthYear[1]);
@@ -260,6 +259,7 @@ export async function updateApartmentGoal(
         id: goalId,
         householdId,
         name: APARTMENT_GOAL_NAME,
+        normalizedName: normalizeText(APARTMENT_GOAL_NAME),
         kind: 'apartment',
         ...changes,
         createdAt: now,
@@ -315,73 +315,6 @@ export async function updateApartmentGoal(
     );
   if (initialCents !== undefined)
     lines.push(`Já guardado e confirmado: ${formatBRL(initialCents as number)}`);
-  return { statements, replies: [{ text: lines.join('\n') }] };
-}
-
-export async function addGoalContribution(
-  deps: Deps,
-  actor: Actor,
-  amountText: string,
-  direction: 'in' | 'out',
-  dateText: string | null,
-  idempotencyPrefix: string,
-): Promise<Effect> {
-  const parsed = parseBRL(amountText);
-  if (parsed.status !== 'ok') return replyOnly('Não entendi o valor do aporte. Exemplo: 500,00.');
-  const date = resolveDateExpression(dateText ?? '', actor.today);
-  if (date.status !== 'ok') return replyOnly('Data inválida. Exemplo: 03/11.');
-
-  const goal = await apartmentGoal(deps, actor.scope.household.id);
-  if (!goal)
-    return replyOnly('A meta do apartamento ainda não foi criada. Comece com /meta entrada=VALOR.');
-
-  const contributionId = deps.newId();
-  const statements: Stmt[] = [
-    deps.db.insert(goalContributions).values({
-      id: contributionId,
-      householdId: actor.scope.household.id,
-      goalId: goal.id,
-      amountCents: parsed.cents,
-      direction,
-      kind: 'contribution',
-      contributionDate: date.date,
-      memberId: actor.member.id,
-      idempotencyKey: `${idempotencyPrefix}:goal`,
-      createdAt: deps.now(),
-    }),
-    auditStatement(deps, actor, 'goal_contribution.created', 'goal_contribution', contributionId, {
-      after: { amountCents: parsed.cents, direction },
-    }),
-  ];
-  const verb = direction === 'in' ? 'Aporte confirmado' : 'Retirada confirmada';
-  const [view] = (await loadGoals(deps.db, actor.scope.household.id, actor.today)).filter(
-    (g) => g.id === goal.id,
-  );
-  const lines = [
-    `${verb}: ${formatBRL(parsed.cents)} na meta ${goal.name} (${formatDate(date.date)}).`,
-  ];
-  if (view) {
-    const signed = direction === 'in' ? parsed.cents : -parsed.cents;
-    const saved = view.progress.confirmedCents + signed;
-    const target = view.progress.targetCents;
-    lines.push(
-      target
-        ? `Agora são ${formatBRL(saved)} de ${formatBRL(target)} (${Math.min(Math.floor((Math.max(saved, 0) * 100) / target), 100)}%).`
-        : `Agora são ${formatBRL(saved)} guardados. Defina o alvo com /meta entrada=VALOR.`,
-    );
-    const planned = view.progress.plannedMonthlyCents;
-    const month =
-      view.progress.confirmedThisMonthCents +
-      (periodOf(date.date) === periodOf(actor.today) ? signed : 0);
-    if (planned && direction === 'in') {
-      lines.push(
-        month >= planned
-          ? `Meta do mês batida: ${formatBRL(month)} de ${formatBRL(planned)} pretendidos. 👏`
-          : `No mês: ${formatBRL(month)} de ${formatBRL(planned)} pretendidos.`,
-      );
-    }
-  }
-  lines.push(`Desfazer: /desfazer_aporte ${shortId(contributionId)}`);
   return { statements, replies: [{ text: lines.join('\n') }] };
 }
 

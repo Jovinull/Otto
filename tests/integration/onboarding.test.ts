@@ -83,12 +83,12 @@ describe('cadastro guiado', () => {
     expect(await h.count('goal_contributions')).toBe(1);
 
     await answer('/metas');
-    expect(h.messaging.last()).toContain('Guardado e confirmado: R$ 3.000,00');
+    expect(h.messaging.last()).toContain('Reservado: R$ 3.000,00');
     expect(h.messaging.last()).toContain(
-      'Aporte pretendido: R$ 1.500,00/mês · Realizado neste mês: R$ 0,00',
+      'Aporte planejado: R$ 1.500,00/mês · Realizado neste mês: R$ 0,00',
     );
     await answer('/contas');
-    expect(h.messaging.last()).toContain('Nubank: R$ 1.250,50');
+    expect(h.messaging.last()).toContain('Nubank (Felipe): R$ 1.250,50');
     await answer('/compromissos');
     expect(h.messaging.last()).toContain('Renda prevista em novembro/2026: R$ 7.300,00');
   });

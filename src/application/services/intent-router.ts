@@ -16,11 +16,11 @@ import { normalizeText } from '../../shared/text';
 import { correctTransaction, requestVoid } from '../commands/corrections';
 import {
   addCommitment,
-  addGoalContribution,
   findCategoryByText,
   setBudget,
   updateApartmentGoal,
 } from '../commands/planning';
+import { moveGoalFunds } from '../commands/goals';
 import { recordDrafts } from '../commands/record-transactions';
 import type { Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
@@ -136,12 +136,19 @@ export async function routeIntent(
       if (!amountAppearsInText(amount, message)) {
         return replyOnly('Não consegui confirmar o valor na mensagem. Use /aporte 500, por favor.');
       }
-      return addGoalContribution(
+      return moveGoalFunds(
         deps,
         actor,
-        amount,
-        'in',
-        interpretation.goal?.contribution_date_text ?? null,
+        {
+          goalText: interpretation.goal?.goal_name ?? null,
+          amountText: amount,
+          direction: 'in',
+          accountText: interpretation.goal?.account_text ?? null,
+          sourceAccountText: interpretation.goal?.source_account_text ?? null,
+          dateText: interpretation.goal?.contribution_date_text ?? null,
+          kind: 'contribution',
+          requireLocation: true,
+        },
         actor.eventId,
       );
     }

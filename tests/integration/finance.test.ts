@@ -152,15 +152,15 @@ describe('transferencias e cartao', () => {
     expect(h.messaging.last()).toContain('Entrou: R$ 0,00 · Saiu: R$ 0,00');
     await h.say('/contas');
     const report = h.messaging.last();
-    expect(report).toContain('Principal: R$ 500,00');
-    expect(report).toContain('Reserva: R$ 1.000,00');
+    expect(report).toContain('Principal (Felipe): R$ 500,00');
+    expect(report).toContain('Reserva (Felipe): R$ 1.000,00');
   });
 
   it('18. compra no cartao e pagamento da fatura nao duplicam a despesa', async () => {
     await h.say('/gasto 300 sapato cartao @Nubank');
     await h.say('/contas');
     expect(h.messaging.last()).toContain('dívida em aberto R$ 300,00');
-    expect(h.messaging.last()).toContain('Principal: R$ 1.000,00');
+    expect(h.messaging.last()).toContain('Principal (Felipe): R$ 1.000,00');
 
     await h.say('/pagar_fatura 300 Principal para Nubank');
     await h.say('/resumo');
@@ -168,7 +168,7 @@ describe('transferencias e cartao', () => {
 
     await h.say('/contas');
     expect(h.messaging.last()).toContain('dívida em aberto R$ 0,00');
-    expect(h.messaging.last()).toContain('Principal: R$ 700,00');
+    expect(h.messaging.last()).toContain('Principal (Felipe): R$ 700,00');
   });
 
   it('parcelamento guarda cronograma sem inventar vencimento', async () => {
@@ -210,7 +210,7 @@ describe('transferencias e cartao', () => {
     await h.say('/addconta reserva Caixinha saldo=0');
     await h.say('/transferir 300 Principal para Caixinha');
     await h.say('/contas');
-    expect(h.messaging.last()).toContain('Caixinha: R$ 300,00');
+    expect(h.messaging.last()).toContain('Caixinha (Felipe): R$ 300,00');
   });
 
   it('saldo desconhecido nunca e apresentado como saldo real', async () => {
@@ -453,9 +453,9 @@ describe('meta do apartamento', () => {
     await h.say('/aporte 25000');
     await h.say('/metas');
     const report = h.messaging.last();
-    expect(report).toContain('Guardado e confirmado: R$ 25.000,00');
+    expect(report).toContain('Reservado: R$ 25.000,00');
     expect(report).toContain('Progresso: 25%');
-    expect(report).toContain('Falta: R$ 75.000,00');
+    expect(report).toContain('Faltam: R$ 75.000,00');
     expect(report).toContain('R$ 6.250,00/mês por 12 meses');
     expect(report).toContain('ignora rendimentos');
   });
@@ -463,14 +463,14 @@ describe('meta do apartamento', () => {
   it('17. aporte pretendido nao conta como guardado', async () => {
     await h.say('/meta entrada=80000 aporte=1500');
     await h.say('/metas');
-    expect(h.messaging.last()).toContain('Guardado e confirmado: R$ 0,00');
+    expect(h.messaging.last()).toContain('Reservado: R$ 0,00');
     expect(h.messaging.last()).toContain('Realizado neste mês: R$ 0,00');
     expect(await h.count('goal_contributions')).toBe(0);
   });
 
   it('meta nasce sem valores inventados e reserva fica separada', async () => {
     await h.say('/metas');
-    expect(h.messaging.last()).toContain('ainda não criada');
+    expect(h.messaging.last()).toContain('Nenhuma meta ainda');
     await h.say('/meta reserva=5000');
     await h.say('/metas');
     expect(h.messaging.last()).toContain('Valor-alvo ainda não definido');
@@ -482,7 +482,7 @@ describe('meta do apartamento', () => {
     await h.say('/meta entrada=80000');
     await h.say('/transferir 500 Principal para Reserva');
     await h.say('/metas');
-    expect(h.messaging.last()).toContain('Guardado e confirmado: R$ 0,00');
+    expect(h.messaging.last()).toContain('Reservado: R$ 0,00');
   });
 
   it('aporte pode ser desfeito com confirmacao', async () => {
@@ -492,7 +492,7 @@ describe('meta do apartamento', () => {
     await h.say(`/desfazer_aporte ${match![1]}`);
     await h.press(buttonData(h.messaging, 'c'));
     await h.say('/metas');
-    expect(h.messaging.last()).toContain('Guardado e confirmado: R$ 0,00');
+    expect(h.messaging.last()).toContain('Reservado: R$ 0,00');
   });
 
   it('aporte em linguagem natural respeita a data informada', async () => {
@@ -509,9 +509,15 @@ describe('meta do apartamento', () => {
           initial_confirmed_text: null,
           contribution_text: '500',
           contribution_date_text: 'ontem',
+          goal_name: null,
+          account_text: null,
+          source_account_text: null,
         },
       }),
     );
+    expect(h.messaging.last()).toContain('esse dinheiro já está em alguma conta');
+    expect(await h.count('goal_contributions')).toBe(0);
+    await h.say('não sei');
     const [row] = await h.query<{ contribution_date: string }>(
       'SELECT contribution_date FROM goal_contributions',
     );
@@ -532,6 +538,9 @@ describe('meta do apartamento', () => {
           initial_confirmed_text: null,
           contribution_text: null,
           contribution_date_text: null,
+          goal_name: null,
+          account_text: null,
+          source_account_text: null,
         },
       }),
     );
@@ -691,7 +700,7 @@ describe('edicao de cadastros', () => {
     await h.say('/gasto 100 mercado @Itau');
     await h.say('/editconta Itau saldo=2000');
     await h.say('/contas');
-    expect(h.messaging.last()).toContain('Itau: R$ 1.900,00');
+    expect(h.messaging.last()).toContain('Itau (Felipe): R$ 1.900,00');
     await h.say('/editconta Itau saldo=?');
     expect((await account('Itau'))!.opening_balance_cents).toBeNull();
   });

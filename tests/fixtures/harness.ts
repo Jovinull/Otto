@@ -125,6 +125,7 @@ const TABLES = [
   'installments',
   'recurring_settlements',
   'installment_plans',
+  'balance_reconciliations',
   'goal_contributions',
   'financial_goals',
   'budgets',

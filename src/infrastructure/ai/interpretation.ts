@@ -74,6 +74,9 @@ const Goal = z.strictObject({
   initial_confirmed_text: nullableText,
   contribution_text: nullableText,
   contribution_date_text: nullableText,
+  goal_name: nullableText,
+  account_text: nullableText,
+  source_account_text: nullableText,
 });
 
 const Commitment = z.strictObject({

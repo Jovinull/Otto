@@ -24,7 +24,8 @@ import { formatBRL, splitInstallments } from '../../shared/money';
 import type { Actor, Deps, Effect, Reply } from '../context';
 import { ledgerContext, replyOnly } from '../context';
 import type { BudgetView, ExtraExpense } from '../queries/finance';
-import { loadBudgetViews, shortId } from '../queries/finance';
+import { accountBalances, loadBudgetViews, shortId } from '../queries/finance';
+import { reservedShortfall } from './goals';
 import {
   budgetNudge,
   incomeOpener,
@@ -33,6 +34,8 @@ import {
   transferOpener,
 } from '../services/tone';
 import { auditStatement } from './shared';
+
+import type { GoalMovement } from './goals';
 
 export const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 /** Lancamento igual da outra pessoa nessa janela sugere que os dois registraram a mesma compra. */
@@ -70,6 +73,10 @@ export type PendingPayload =
     }
   | { type: 'void_contribution'; contributionId: string }
   | { type: 'archive_account'; accountId: string }
+  | { type: 'archive_goal'; goalId: string }
+  | { type: 'reconcile'; reconciliationId: string }
+  | { type: 'goal_location'; movement: GoalMovement }
+  | { type: 'goal_move'; movement: GoalMovement }
   | { type: 'onboarding'; step: string }
   | { type: 'onboarding_confirm' };
 
@@ -115,7 +122,7 @@ function describeDraft(draft: TransactionDraft): string {
   return `${value} — ${draft.description}`;
 }
 
-function statementsForTransaction(
+export function statementsForTransaction(
   deps: Deps,
   actor: Actor,
   transaction: ResolvedTransaction,
@@ -448,6 +455,7 @@ export async function recordDrafts(
 ): Promise<Effect> {
   const context = ledgerContext(actor);
   const resolved: ResolvedTransaction[] = [];
+  const reservedNotes: string[] = [];
 
   for (let index = 0; index < drafts.length; index++) {
     const outcome = resolveDraft(drafts[index]!, context);
@@ -483,6 +491,29 @@ export async function recordDrafts(
   }
 
   let confirmationReason = options.confirmationReason ?? null;
+  const spendingAccounts = resolved.filter(
+    (t) => t.sourceAccountId !== null && !t.isCreditPurchase,
+  );
+  if (spendingAccounts.length > 0) {
+    const positions = await accountBalances(deps.db, actor.scope);
+    const needed = new Map<string, number>();
+    for (const t of spendingAccounts) {
+      needed.set(t.sourceAccountId!, (needed.get(t.sourceAccountId!) ?? 0) + t.amountCents);
+    }
+    for (const [accountId, amount] of needed) {
+      const position = positions.find((p) => p.id === accountId);
+      const shortfall = position ? reservedShortfall(position, amount) : null;
+      if (!position || shortfall === null) continue;
+      if (options.origin === 'confirmation') {
+        reservedNotes.push(
+          `${position.name}: ${formatBRL(shortfall)} reservados para metas ficaram sem saldo. Ajuste com /retirada META VALOR @${position.name}.`,
+        );
+      } else if (!confirmationReason) {
+        const goals = position.allocations.map((a) => a.goalName).join(', ');
+        confirmationReason = `Isso usa ${formatBRL(shortfall)} que estão reservados em ${position.name} para ${goals}. Registrar mesmo assim?`;
+      }
+    }
+  }
   if (!confirmationReason && options.origin !== 'confirmation') {
     for (const transaction of resolved) {
       const twin = await findRecentTwin(deps, actor, transaction);
@@ -562,6 +593,8 @@ export async function recordDrafts(
       : [`${opener}:`, ...items.map((i) => `• ${transactionLine(actor, i.transaction, i.id)}`)];
   return {
     statements,
-    replies: [{ text: [...lines, ...settlement.notes, ...budget.notes].join('\n') }],
+    replies: [
+      { text: [...lines, ...settlement.notes, ...budget.notes, ...reservedNotes].join('\n') },
+    ],
   };
 }

@@ -3,6 +3,8 @@ import { addMonths, periodOf } from '../../shared/dates';
 import { percentOf } from '../../shared/money';
 
 export interface GoalInput {
+  /** Alvo direto das metas gerais. O apartamento soma entrada e custos. */
+  targetCents?: number | null;
   entryCents: number | null;
   additionalCostsCents: number | null;
   deadline: LocalDate | null;
@@ -39,7 +41,7 @@ export function monthsUntil(from: LocalDate, deadline: LocalDate): number {
 
 /** Projecoes ignoram rentabilidade. Os textos ao usuario precisam informar isso. */
 export function computeGoalProgress(input: GoalInput, today: LocalDate): GoalProgress {
-  const targetCents = goalTarget(input.entryCents, input.additionalCostsCents);
+  const targetCents = input.targetCents ?? goalTarget(input.entryCents, input.additionalCostsCents);
   const remainingCents =
     targetCents === null ? null : Math.max(targetCents - input.confirmedCents, 0);
 
@@ -72,4 +74,24 @@ export function computeGoalProgress(input: GoalInput, today: LocalDate): GoalPro
 export function monthsToReach(remainingCents: number, monthlyCents: number): number | null {
   if (monthlyCents <= 0) return null;
   return Math.ceil(remainingCents / monthlyCents);
+}
+
+export interface AccountAvailability {
+  balanceCents: number | null;
+  allocatedCents: number;
+  /** Saldo menos o reservado. Nulo quando o saldo e desconhecido. */
+  freeCents: number | null;
+}
+
+/** Reservar nao cria dinheiro: o reservado e uma parte do saldo da propria conta. */
+export function computeAvailability(position: {
+  balanceCents: number | null;
+  allocatedCents: number;
+}): AccountAvailability {
+  return {
+    balanceCents: position.balanceCents,
+    allocatedCents: position.allocatedCents,
+    freeCents:
+      position.balanceCents === null ? null : position.balanceCents - position.allocatedCents,
+  };
 }
