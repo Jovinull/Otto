@@ -1,6 +1,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { ScheduleType } from '../../domain/finance/recurring';
-import { matchAccount } from '../../domain/finance/transactions';
+import { accountIdentityKey, matchAccount } from '../../domain/finance/transactions';
 import type { Stmt } from '../../infrastructure/database/client';
 import {
   budgets,
@@ -12,7 +12,13 @@ import { formatBRL, parseBRL } from '../../shared/money';
 import { normalizeText } from '../../shared/text';
 import type { Account, Actor, Deps, Effect } from '../context';
 import { replyOnly } from '../context';
-import { findCategoryByText, findMember, normalizedRecurringName } from './planning';
+import {
+  findCategoryByText,
+  findMember,
+  normalizedRecurringName,
+  resolveOwnership,
+  setMemberDefaultStatement,
+} from './planning';
 import { confirmationButtons, createPendingStatement } from './record-transactions';
 import { auditStatement } from './shared';
 
@@ -23,13 +29,19 @@ const ZERO = /^0+(,0{1,2})?$/;
 
 type AccountLookup = { account: Account } | { error: string };
 
-function findAccount(actor: Actor, name: string): AccountLookup {
+export function findAccount(actor: Actor, name: string): AccountLookup {
   const accounts = actor.scope.accounts;
-  const exact = accounts.find((a) => a.normalizedName === normalizeText(name));
-  if (exact) return { account: exact };
-  const match = matchAccount(name, accounts);
+  const match = matchAccount(spaced(name), accounts, { memberId: actor.member.id });
   if (match.status === 'found') {
     return { account: accounts.find((a) => a.id === match.account.id)! };
+  }
+  if (match.status === 'ambiguous') {
+    const options = match.options
+      .map((a) => `${a.name}${a.kind === 'credit_card' ? ' (cartão)' : ''}`)
+      .join(', ');
+    return {
+      error: `Há mais de uma com esse nome: ${options}. Escreva "cartao NOME" ou "conta NOME".`,
+    };
   }
   const list = accounts.map((a) => a.name).join(', ') || 'nenhuma';
   return { error: `Não achei a conta "${name}". Contas: ${list}.` };
@@ -47,6 +59,11 @@ export interface AccountChanges {
   closingDay?: string | undefined;
   dueDay?: string | undefined;
   owner?: string | undefined;
+  institution?: string | undefined;
+  description?: string | undefined;
+  limit?: string | undefined;
+  available?: string | undefined;
+  sharedFallback?: string | undefined;
   makeDefault: boolean;
 }
 
@@ -68,10 +85,6 @@ export function editAccount(
     const name = spaced(changes.name);
     const normalizedName = normalizeText(name);
     if (!normalizedName) return replyOnly('Nome inválido.');
-    const taken = actor.scope.accounts.some(
-      (a) => a.id !== account.id && a.normalizedName === normalizedName,
-    );
-    if (taken) return replyOnly('Já existe outra conta com esse nome.');
     set.name = name;
     set.normalizedName = normalizedName;
     notes.push(`nome: ${name}`);
@@ -81,9 +94,11 @@ export function editAccount(
     if (isCard) return replyOnly('Cartão não tem saldo inicial.');
     if (CLEAR.has(changes.opening)) {
       set.openingBalanceCents = null;
+      set.openingBalanceDate = null;
       notes.push('saldo inicial: desconhecido');
     } else if (ZERO.test(changes.opening)) {
       set.openingBalanceCents = 0;
+      set.openingBalanceDate = actor.today;
       notes.push(`saldo inicial: ${formatBRL(0)}`);
     } else {
       const parsed = parseBRL(changes.opening);
@@ -91,6 +106,7 @@ export function editAccount(
         return replyOnly('Saldo inválido. Exemplo: saldo=1200,50, ou saldo=? para desconhecido.');
       }
       set.openingBalanceCents = parsed.cents;
+      set.openingBalanceDate = actor.today;
       notes.push(`saldo inicial: ${formatBRL(parsed.cents)}`);
     }
   }
@@ -110,32 +126,79 @@ export function editAccount(
     notes.push(`${label}: ${day === null ? 'não informado' : `dia ${day}`}`);
   }
 
+  let ownership = account.ownership;
+  let ownerMemberId = account.ownerMemberId;
   if (changes.owner !== undefined) {
-    if (CLEAR.has(changes.owner) || normalizeText(changes.owner) === 'casal') {
-      set.ownerMemberId = null;
-      notes.push('dono: casal');
-    } else {
-      const member = findMember(actor, spaced(changes.owner));
-      if (!member) return replyOnly(`Não encontrei "${changes.owner}" no cadastro.`);
-      set.ownerMemberId = member.id;
-      notes.push(`dono: ${member.name}`);
+    const owner = resolveOwnership(
+      actor,
+      CLEAR.has(changes.owner) ? 'casal' : spaced(changes.owner),
+      account.kind,
+    );
+    if ('error' in owner) return replyOnly(owner.error);
+    ownership = owner.ownership;
+    ownerMemberId = owner.ownerMemberId;
+    set.ownership = ownership;
+    set.ownerMemberId = ownerMemberId;
+    notes.push(`dono: ${owner.ownerName}`);
+  }
+
+  const identityKey = accountIdentityKey(
+    ownership,
+    ownerMemberId,
+    account.kind,
+    set.normalizedName ?? account.normalizedName,
+  );
+  if (identityKey !== account.identityKey) {
+    if (actor.scope.accounts.some((a) => a.id !== account.id && a.identityKey === identityKey)) {
+      return replyOnly('Já existe outra conta com esse nome para esse dono.');
     }
+    set.identityKey = identityKey;
+  }
+
+  if (changes.institution !== undefined) {
+    set.institution = CLEAR.has(changes.institution) ? null : spaced(changes.institution);
+    notes.push(`instituição: ${set.institution ?? 'não informada'}`);
+  }
+  if (changes.description !== undefined) {
+    set.description = CLEAR.has(changes.description) ? null : spaced(changes.description);
+    notes.push('descrição atualizada');
+  }
+  for (const { raw, field, label } of [
+    { raw: changes.limit, field: 'creditLimitCents', label: 'limite' },
+    { raw: changes.available, field: 'creditAvailableCents', label: 'limite disponível' },
+  ] as const) {
+    if (raw === undefined) continue;
+    if (!isCard) return replyOnly('Limite só vale para cartão.');
+    if (CLEAR.has(raw)) {
+      set[field] = null;
+      notes.push(`${label}: não informado`);
+      continue;
+    }
+    const parsed = parseBRL(raw);
+    if (parsed.status !== 'ok') return replyOnly(`Valor inválido em ${label}. Exemplo: 5000.`);
+    set[field] = parsed.cents;
+    if (field === 'creditAvailableCents') set.creditAvailableDate = actor.today;
+    notes.push(`${label}: ${formatBRL(parsed.cents)}`);
+  }
+  if (changes.sharedFallback !== undefined) {
+    if (ownership !== 'shared') return replyOnly('Só conta do casal pode ser alternativa.');
+    set.sharedFallback = !['nao', 'off', '-'].includes(normalizeText(changes.sharedFallback));
+    notes.push(set.sharedFallback ? 'usada como alternativa' : 'não é alternativa');
   }
 
   const householdId = actor.scope.household.id;
   const statements: Stmt[] = [];
   if (changes.makeDefault) {
-    if (isCard || account.kind === 'reserve') {
-      return replyOnly('Cartão e reserva não podem ser conta padrão.');
-    }
+    if (account.kind === 'reserve') return replyOnly('Reserva não pode ser conta padrão.');
     statements.push(
-      deps.db
-        .update(financialAccounts)
-        .set({ isDefault: false })
-        .where(eq(financialAccounts.householdId, householdId)),
+      setMemberDefaultStatement(
+        deps,
+        ownerMemberId ?? actor.member.id,
+        isCard ? 'defaultCardId' : 'defaultAccountId',
+        account.id,
+      ),
     );
-    set.isDefault = true;
-    notes.push('conta padrão da casa');
+    notes.push(isCard ? 'cartão padrão' : 'conta padrão');
   }
 
   if (notes.length === 0) {

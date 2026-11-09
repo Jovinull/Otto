@@ -22,6 +22,13 @@
       "when": 1794163299354,
       "tag": "0002_crazy_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1794184531565,
+      "tag": "0003_last_trauma",
+      "breakpoints": true
     }
   ]
 }

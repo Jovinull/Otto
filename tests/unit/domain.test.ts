@@ -19,6 +19,7 @@ import {
   amountAppearsInText,
   applySlotAnswer,
   defaultCashAccount,
+  defaultCreditCard,
   matchAccount,
   resolveDraft,
 } from '../../src/domain/finance/transactions';
@@ -39,8 +40,9 @@ const account = (
   name: id,
   normalizedName: id.toLowerCase(),
   kind,
-  ownerMemberId: null,
-  isDefault: false,
+  ownerMemberId: 'f',
+  ownership: 'member',
+  sharedFallback: false,
   ...extra,
 });
 
@@ -126,10 +128,7 @@ describe('resolveDraft', () => {
   });
 
   it('transferencia vira movimento interno, nunca receita', () => {
-    const accounts = [
-      account('Principal', 'checking', { isDefault: true }),
-      account('Reserva', 'reserve'),
-    ];
+    const accounts = [account('Principal', 'checking'), account('Reserva', 'reserve')];
     const outcome = resolveDraft(
       draft({ kind: 'transfer', amountText: '300', destinationAccountText: 'minha reserva' }),
       context(accounts),
@@ -141,10 +140,7 @@ describe('resolveDraft', () => {
   });
 
   it('transferencia para cartao vira pagamento de fatura', () => {
-    const accounts = [
-      account('Principal', 'checking', { isDefault: true }),
-      account('Nubank', 'credit_card'),
-    ];
+    const accounts = [account('Principal', 'checking'), account('Nubank', 'credit_card')];
     const outcome = resolveDraft(
       draft({ kind: 'card_payment', amountText: '850', destinationAccountText: 'nubank' }),
       context(accounts),
@@ -169,7 +165,7 @@ describe('resolveDraft', () => {
   });
 
   it('parcelamento exige cartao', () => {
-    const accounts = [account('Principal', 'checking', { isDefault: true })];
+    const accounts = [account('Principal', 'checking')];
     expect(resolveDraft(draft({ installments: 6 }), context(accounts)).status).toBe('rejected');
   });
 
@@ -191,20 +187,69 @@ describe('resolveDraft', () => {
 });
 
 describe('conta padrao e correspondencia', () => {
-  it('segue a ordem da regra explicita', () => {
-    const member = { id: 'f', name: 'Felipe' };
-    const accounts = [account('A', 'checking', { isDefault: true }), account('B', 'checking')];
-    expect(defaultCashAccount(member, accounts)).toMatchObject({ account: { id: 'A' } });
-    expect(defaultCashAccount({ ...member, defaultAccountId: 'B' }, accounts)).toMatchObject({
+  const felipe = { id: 'f', name: 'Felipe' };
+  const jennifer = { id: 'j', name: 'Jennifer' };
+
+  it('usa o padrao individual, depois a unica propria, sem cruzar pessoas', () => {
+    const accounts = [account('A', 'checking'), account('B', 'checking')];
+    expect(defaultCashAccount(felipe, accounts)).toEqual({ status: 'ambiguous' });
+    expect(defaultCashAccount({ ...felipe, defaultAccountId: 'B' }, accounts)).toMatchObject({
       account: { id: 'B' },
     });
-    expect(defaultCashAccount(member, [])).toEqual({ status: 'none_configured' });
+    expect(defaultCashAccount(felipe, [account('A', 'checking')])).toMatchObject({
+      account: { id: 'A' },
+    });
+    expect(defaultCashAccount(jennifer, [account('A', 'checking')])).toEqual({
+      status: 'ambiguous',
+    });
+    expect(defaultCashAccount({ ...jennifer, defaultAccountId: 'A' }, accounts)).toEqual({
+      status: 'ambiguous',
+    });
+    expect(defaultCashAccount(felipe, [])).toEqual({ status: 'none_configured' });
+    expect(
+      defaultCashAccount(felipe, [account('R', 'reserve'), account('C', 'credit_card')]),
+    ).toEqual({ status: 'none_configured' });
   });
 
-  it('nao usa reserva nem cartao como padrao de gasto', () => {
-    const accounts = [account('R', 'reserve'), account('C', 'credit_card')];
-    expect(defaultCashAccount({ id: 'f', name: 'F' }, accounts)).toEqual({
-      status: 'none_configured',
+  it('conta do casal so entra como alternativa explicita', () => {
+    const shared = { ownerMemberId: null, ownership: 'shared' as const };
+    expect(defaultCashAccount(jennifer, [account('C', 'joint', shared)])).toEqual({
+      status: 'ambiguous',
+    });
+    expect(
+      defaultCashAccount(jennifer, [account('C', 'joint', { ...shared, sharedFallback: true })]),
+    ).toMatchObject({ account: { id: 'C' } });
+  });
+
+  it('cartao padrao e de quem comprou; o da outra pessoa nao e escolhido', () => {
+    const cards = [account('Roxo', 'credit_card'), account('Azul', 'credit_card')];
+    expect(defaultCreditCard(felipe, cards)).toMatchObject({ status: 'ambiguous' });
+    expect(defaultCreditCard({ ...felipe, defaultCardId: 'Azul' }, cards)).toMatchObject({
+      account: { id: 'Azul' },
+    });
+    expect(defaultCreditCard(jennifer, [account('Roxo', 'credit_card')])).toMatchObject({
+      status: 'ambiguous',
+    });
+    expect(defaultCreditCard(felipe, [])).toEqual({ status: 'none_configured' });
+  });
+
+  it('nome igual: prefere a conta da propria pessoa e separa conta de cartao', () => {
+    const accounts = [
+      account('Nubank', 'checking', { id: 'nf', normalizedName: 'nubank' }),
+      account('Nubank', 'checking', { id: 'nj', normalizedName: 'nubank', ownerMemberId: 'j' }),
+      account('Nubank', 'credit_card', { id: 'cf', normalizedName: 'nubank' }),
+    ];
+    expect(matchAccount('nubank', accounts, { memberId: 'j' })).toMatchObject({
+      account: { id: 'nj' },
+    });
+    expect(matchAccount('cartao nubank', accounts, { memberId: 'f' })).toMatchObject({
+      account: { id: 'cf' },
+    });
+    expect(matchAccount('conta nubank', accounts, { memberId: 'f' })).toMatchObject({
+      account: { id: 'nf' },
+    });
+    expect(matchAccount('nubank', accounts, { memberId: 'f' })).toMatchObject({
+      status: 'ambiguous',
     });
   });
 

@@ -1,11 +1,11 @@
 import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { canAdminister, canWrite } from '../../domain/household/authorization';
 import type { TransactionDraft } from '../../domain/finance/transactions';
+import { matchAccount } from '../../domain/finance/transactions';
 import { parseMemberPreferences, Tone } from '../../domain/household/settings';
 import {
   aiUsage,
   financialTransactions,
-  householdMembers,
   households,
   incomingEvents,
   installmentPlans,
@@ -21,10 +21,12 @@ import {
   addCommitment,
   addGoalContribution,
   findCategoryByText,
+  findMember,
   markNextInstallmentPaid,
   requestContributionVoid,
   setBudget,
   setInstallmentFirstDue,
+  setMemberDefaultStatement,
   updateApartmentGoal,
 } from '../commands/planning';
 import {
@@ -189,6 +191,8 @@ const WRITE_COMMANDS = new Set([
   'addconta',
   'addcategoria',
   'padrao',
+  'contapadrao',
+  'cartaopadrao',
   'parcela_data',
   'parcela_paga',
   'editconta',
@@ -405,7 +409,9 @@ export async function handleCommand(
     case 'addconta': {
       const kind =
         ACCOUNT_KIND_ALIASES[normalizeText(rest[0] ?? '') as keyof typeof ACCOUNT_KIND_ALIASES];
-      const nameParts = rest.slice(1).filter((t) => normalizeText(t) !== 'padrao');
+      const nameParts = rest
+        .slice(1)
+        .filter((t) => !['padrao', 'alternativa'].includes(normalizeText(t)));
       if (!kind || nameParts.length === 0) {
         return replyOnly(
           'Formato: /addconta corrente|poupanca|dinheiro|reserva|conjunta|cartao Nome [saldo=1200] [padrao] [fecha=3] [vence=10] [dono=Nome]',
@@ -418,7 +424,13 @@ export async function handleCommand(
         isDefault: rest.some((t) => normalizeText(t) === 'padrao'),
         closingDay: options.has('fecha') ? Number(options.get('fecha')) : null,
         dueDay: options.has('vence') ? Number(options.get('vence')) : null,
-        ownerText: options.get('dono') ?? null,
+        ownerText: options.get('dono')?.replaceAll('_', ' ') ?? null,
+        institution: options.get('banco')?.replaceAll('_', ' ') ?? null,
+        description: options.get('descricao')?.replaceAll('_', ' ') ?? null,
+        sharedFallback: rest.some((t) => normalizeText(t) === 'alternativa'),
+        limitText: options.get('limite') ?? null,
+        availableText: options.get('disponivel') ?? null,
+        debtText: options.get('divida') ?? null,
       });
     }
     case 'addcategoria': {
@@ -433,24 +445,11 @@ export async function handleCommand(
       }
       return addCategory(deps, actor, rest.slice(0, -1).join(' '), nature);
     }
-    case 'padrao': {
-      if (rest.length === 0) return replyOnly('Formato: /padrao NomeDaConta');
-      const target = scope.accounts.find((a) => a.normalizedName === normalizeText(rest.join(' ')));
-      if (!target || target.kind === 'credit_card') return replyOnly('Conta não encontrada.');
-      const preferences = {
-        ...parseMemberPreferences(actor.member.preferences),
-        defaultAccountId: target.id,
-      };
-      return {
-        statements: [
-          deps.db
-            .update(householdMembers)
-            .set({ preferences: JSON.stringify(preferences) })
-            .where(eq(householdMembers.id, actor.member.id)),
-        ],
-        replies: [{ text: `Conta padrão de ${actor.member.name}: ${target.name}.` }],
-      };
-    }
+    case 'padrao':
+    case 'contapadrao':
+      return defaultAccountCommand(deps, actor, 'account', rest, options.get('de') ?? null);
+    case 'cartaopadrao':
+      return defaultAccountCommand(deps, actor, 'card', rest, options.get('de') ?? null);
     case 'parcela_data':
       if (rest.length < 2) return replyOnly('Formato: /parcela_data CODIGO DD/MM/AAAA');
       return setInstallmentFirstDue(deps, actor, rest[0]!, rest[1]!);
@@ -458,7 +457,7 @@ export async function handleCommand(
       const name = rest.filter((t) => normalizeText(t) !== 'padrao').join(' ');
       if (!name) {
         return replyOnly(
-          'Formato: /editconta Nome [nome=Novo_Nome] [saldo=VALOR|?] [fecha=N|-] [vence=N|-] [dono=Nome|casal] [padrao]',
+          'Formato: /editconta Nome [nome=Novo_Nome] [saldo=VALOR|?] [fecha=N|-] [vence=N|-] [dono=Nome|casal] [banco=Nome] [descricao=Texto] [limite=VALOR] [disponivel=VALOR] [alternativa=sim|nao] [padrao]',
         );
       }
       return editAccount(deps, actor, name, {
@@ -467,6 +466,11 @@ export async function handleCommand(
         closingDay: options.get('fecha'),
         dueDay: options.get('vence'),
         owner: options.get('dono'),
+        institution: options.get('banco'),
+        description: options.get('descricao'),
+        limit: options.get('limite'),
+        available: options.get('disponivel'),
+        sharedFallback: options.get('alternativa'),
         makeDefault: rest.some((t) => normalizeText(t) === 'padrao'),
       });
     }
@@ -565,6 +569,54 @@ function saveSettings(
       auditStatement(deps, actor, 'settings.updated', 'household', id, {}),
     ],
     replies: [{ text: message }],
+  };
+}
+
+/** Mostra ou define a conta (ou o cartao) padrao de uma pessoa. */
+function defaultAccountCommand(
+  deps: Deps,
+  actor: Actor,
+  type: 'account' | 'card',
+  rest: readonly string[],
+  personText: string | null,
+): Effect {
+  const member = personText ? findMember(actor, personText) : actor.member;
+  if (!member) return replyOnly(`Não encontrei "${personText}" no cadastro.`);
+  const noun = type === 'card' ? 'Cartão padrão' : 'Conta padrão';
+  const key = type === 'card' ? 'defaultCardId' : 'defaultAccountId';
+  const { scope } = actor;
+  if (rest.length === 0) {
+    const currentId = parseMemberPreferences(member.preferences)[key];
+    const current = scope.accounts.find((a) => a.id === currentId);
+    return replyOnly(
+      current
+        ? `${noun} de ${member.name}: ${current.name}.`
+        : `${member.name} ainda não tem ${noun.toLowerCase()}. Exemplo: /${type === 'card' ? 'cartaopadrao' : 'contapadrao'} Nome`,
+    );
+  }
+  const candidates = scope.accounts.filter((a) =>
+    type === 'card' ? a.kind === 'credit_card' : a.kind !== 'credit_card' && a.kind !== 'reserve',
+  );
+  const match = matchAccount(rest.join(' ').replaceAll('_', ' '), candidates, {
+    memberId: member.id,
+  });
+  if (match.status !== 'found') {
+    return replyOnly(
+      `Não achei com esse nome. Opções: ${candidates.map((a) => a.name).join(', ') || 'nenhuma'}.`,
+    );
+  }
+  const target = match.account;
+  if (target.ownership === 'member' && target.ownerMemberId !== member.id) {
+    return replyOnly(`${target.name} é de outra pessoa; não pode ser o padrão de ${member.name}.`);
+  }
+  return {
+    statements: [
+      setMemberDefaultStatement(deps, member.id, key, target.id),
+      auditStatement(deps, actor, 'member.default_updated', 'member', member.id, {
+        after: { [key]: target.id },
+      }),
+    ],
+    replies: [{ text: `${noun} de ${member.name}: ${target.name}.` }],
   };
 }
 

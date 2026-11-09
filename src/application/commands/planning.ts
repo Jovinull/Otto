@@ -1,7 +1,8 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { computeBudgetStatus, newThresholds } from '../../domain/budgets/budget';
 import type { ScheduleType } from '../../domain/finance/recurring';
 import type { AccountKind } from '../../domain/finance/transactions';
+import { accountIdentityKey } from '../../domain/finance/transactions';
 import type { Stmt } from '../../infrastructure/database/client';
 import {
   budgets,
@@ -9,6 +10,7 @@ import {
   financialAccounts,
   financialGoals,
   goalContributions,
+  householdMembers,
   installmentPlans,
   installments,
   recurringEntries,
@@ -545,65 +547,142 @@ export interface NewAccount {
   isDefault: boolean;
   closingDay: number | null;
   dueDay: number | null;
+  /** Nome da pessoa ou "casal". Vazio: de quem enviou (conjunta: do casal). */
   ownerText: string | null;
+  institution?: string | null;
+  description?: string | null;
+  sharedFallback?: boolean;
+  limitText?: string | null;
+  availableText?: string | null;
+  debtText?: string | null;
+}
+
+const SHARED_OWNER_WORDS = new Set(['casal', 'nos', 'nosso', 'nossa', 'compartilhada', 'conjunta']);
+
+export function resolveOwnership(
+  actor: Actor,
+  ownerText: string | null,
+  kind: AccountKind,
+):
+  | { ownership: 'member' | 'shared'; ownerMemberId: string | null; ownerName: string }
+  | { error: string } {
+  if (!ownerText) {
+    return kind === 'joint'
+      ? { ownership: 'shared', ownerMemberId: null, ownerName: 'casal' }
+      : { ownership: 'member', ownerMemberId: actor.member.id, ownerName: actor.member.name };
+  }
+  if (SHARED_OWNER_WORDS.has(normalizeText(ownerText))) {
+    return { ownership: 'shared', ownerMemberId: null, ownerName: 'casal' };
+  }
+  const owner = findMember(actor, ownerText);
+  if (!owner) return { error: `Não encontrei "${ownerText}" no cadastro.` };
+  return { ownership: 'member', ownerMemberId: owner.id, ownerName: owner.name };
+}
+
+/** Grava so a chave alterada: duas mudancas no mesmo lote nao se sobrescrevem. */
+export function setMemberDefaultStatement(
+  deps: Deps,
+  memberId: string,
+  key: 'defaultAccountId' | 'defaultCardId',
+  accountId: string,
+): Stmt {
+  return deps.db
+    .update(householdMembers)
+    .set({
+      preferences: sql`json_set(${householdMembers.preferences}, ${`$.${key}`}, ${accountId})`,
+    })
+    .where(eq(householdMembers.id, memberId));
 }
 
 export async function addAccount(deps: Deps, actor: Actor, input: NewAccount): Promise<Effect> {
   const normalizedName = normalizeText(input.name);
   if (!normalizedName) return replyOnly('Informe o nome da conta.');
-  if (actor.scope.accounts.some((a) => a.normalizedName === normalizedName)) {
-    return replyOnly('Já existe uma conta com esse nome.');
+  const owner = resolveOwnership(actor, input.ownerText, input.kind);
+  if ('error' in owner) return replyOnly(owner.error);
+  const identityKey = accountIdentityKey(
+    owner.ownership,
+    owner.ownerMemberId,
+    input.kind,
+    normalizedName,
+  );
+  if (actor.scope.accounts.some((a) => a.identityKey === identityKey)) {
+    return replyOnly(`${owner.ownerName} já tem uma conta com esse nome.`);
   }
-  let opening: number | null = null;
-  if (input.openingText !== null && /^0+(,0{1,2})?$/.test(input.openingText.trim())) {
-    // Conta zerada e um saldo conhecido, diferente de saldo desconhecido.
-    opening = 0;
-  } else if (input.openingText !== null) {
-    const parsed = parseBRL(input.openingText);
-    if (parsed.status !== 'ok') return replyOnly('Saldo inicial inválido. Exemplo: saldo=1200,50');
-    opening = parsed.cents;
+
+  const money = (text: string | null | undefined): number | null | 'invalid' => {
+    if (text === null || text === undefined) return null;
+    if (/^0+(,0{1,2})?$/.test(text.trim())) return 0;
+    const parsed = parseBRL(text);
+    return parsed.status === 'ok' ? parsed.cents : 'invalid';
+  };
+  let opening = money(input.openingText);
+  if (opening === 'invalid') return replyOnly('Saldo inicial inválido. Exemplo: saldo=1200,50');
+  const isCard = input.kind === 'credit_card';
+  if (isCard && opening !== null) {
+    return replyOnly('Cartão não tem saldo inicial. Se já houver dívida, use divida=VALOR.');
   }
-  if (input.kind === 'credit_card' && opening !== null) {
-    return replyOnly('Cartão não tem saldo inicial. Registre compras e pagamentos normalmente.');
+  const debt = money(input.debtText);
+  const limit = money(input.limitText);
+  const available = money(input.availableText);
+  if (debt === 'invalid' || limit === 'invalid' || available === 'invalid') {
+    return replyOnly('Valor inválido. Exemplo: limite=5000 divida=320,50');
   }
-  const owner = findMember(actor, input.ownerText);
-  if (input.ownerText && !owner)
-    return replyOnly(`Não encontrei "${input.ownerText}" no cadastro.`);
+  if (!isCard && (debt !== null || limit !== null || available !== null)) {
+    return replyOnly('Limite e dívida só valem para cartão.');
+  }
+  if (isCard && debt !== null) opening = -debt;
 
   const householdId = actor.scope.household.id;
   const id = deps.newId();
-  const statements: Stmt[] = [];
-  if (input.isDefault) {
-    statements.push(
-      deps.db
-        .update(financialAccounts)
-        .set({ isDefault: false })
-        .where(eq(financialAccounts.householdId, householdId)),
-    );
-  }
-  statements.push(
+  const statements: Stmt[] = [
     deps.db.insert(financialAccounts).values({
       id,
       householdId,
       name: input.name,
       normalizedName,
       kind: input.kind,
-      ownerMemberId: owner?.id ?? null,
+      ownerMemberId: owner.ownerMemberId,
+      ownership: owner.ownership,
+      institution: input.institution ?? null,
+      description: input.description ?? null,
       openingBalanceCents: opening,
-      isDefault: input.isDefault,
+      openingBalanceDate: opening === null ? null : actor.today,
+      sharedFallback: owner.ownership === 'shared' && (input.sharedFallback ?? false),
       creditClosingDay: input.closingDay,
       creditDueDay: input.dueDay,
+      creditLimitCents: limit,
+      creditAvailableCents: available,
+      creditAvailableDate: available === null ? null : actor.today,
+      identityKey,
       createdAt: deps.now(),
     }),
-    auditStatement(deps, actor, 'account.created', 'account', id, { after: { kind: input.kind } }),
-  );
-  const balance =
-    input.kind === 'credit_card'
-      ? ''
-      : opening === null
-        ? ' Saldo inicial não informado: mostro só o movimentado aqui, nunca um saldo real.'
-        : ` Saldo inicial: ${formatBRL(opening)}.`;
-  return { statements, replies: [{ text: `Conta criada: ${input.name}.${balance}` }] };
+    auditStatement(deps, actor, 'account.created', 'account', id, {
+      after: { kind: input.kind, ownership: owner.ownership, ownerMemberId: owner.ownerMemberId },
+    }),
+  ];
+  if (input.isDefault && input.kind !== 'reserve') {
+    statements.push(
+      setMemberDefaultStatement(
+        deps,
+        owner.ownerMemberId ?? actor.member.id,
+        isCard ? 'defaultCardId' : 'defaultAccountId',
+        id,
+      ),
+    );
+  }
+  const balance = isCard
+    ? debt
+      ? ` Dívida informada: ${formatBRL(debt)}.`
+      : ''
+    : opening === null
+      ? ' Saldo inicial não informado: mostro só o movimentado aqui, nunca um saldo real.'
+      : ` Saldo inicial: ${formatBRL(opening)} em ${formatDate(actor.today)}.`;
+  const label = isCard ? 'Cartão criado' : 'Conta criada';
+  const padrao = input.isDefault && input.kind !== 'reserve' ? ' É a padrão.' : '';
+  return {
+    statements,
+    replies: [{ text: `${label}: ${input.name} (${owner.ownerName}).${balance}${padrao}` }],
+  };
 }
 
 export function addCategory(

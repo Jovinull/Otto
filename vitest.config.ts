@@ -8,6 +8,8 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: './wrangler.jsonc' },
         miniflare: {
+          // Banco separado para testar migracoes sobre dados no formato antigo.
+          d1Databases: ['MIGRATION_DB'],
           bindings: {
             TEST_MIGRATIONS: migrations,
             TELEGRAM_WEBHOOK_SECRET: 'test-webhook-secret',

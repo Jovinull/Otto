@@ -4,6 +4,7 @@ import {
   buttonData,
   createHarness,
   DEFAULT_NOW,
+  FELIPE_ID,
   interpretation,
   item,
   JENNIFER_ID,
@@ -701,8 +702,14 @@ describe('edicao de cadastros', () => {
     await h.say('/editconta Nubank nome=Itau');
     expect(h.messaging.last()).toContain('Já existe');
     await h.say('/editconta Nubank nome=Nubank_Felipe dono=Felipe padrao');
-    expect(await account('Nubank Felipe')).toMatchObject({ is_default: 1 });
-    expect((await account('Itau'))!.is_default).toBe(0);
+    const [felipe] = await h.query<{ preferences: string }>(
+      'SELECT preferences FROM household_members WHERE telegram_user_id = ?',
+      FELIPE_ID,
+    );
+    const nubank = await h.query<{ id: string }>(
+      "SELECT id FROM financial_accounts WHERE name = 'Nubank Felipe'",
+    );
+    expect(JSON.parse(felipe!.preferences).defaultAccountId).toBe(nubank[0]!.id);
   });
 
   it('arquivar conta pede confirmacao e preserva o historico', async () => {

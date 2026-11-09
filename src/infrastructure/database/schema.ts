@@ -46,15 +46,36 @@ export const financialAccounts = sqliteTable(
       enum: ['checking', 'savings', 'cash', 'reserve', 'joint', 'credit_card'],
     }).notNull(),
     ownerMemberId: text('owner_member_id').references(() => householdMembers.id),
+    // member: de uma pessoa. shared: do casal. unassigned: cadastro antigo sem dono definido.
+    ownership: text('ownership', { enum: ['member', 'shared', 'unassigned'] })
+      .notNull()
+      .default('unassigned'),
+    institution: text('institution'),
+    description: text('description'),
     // Nulo significa saldo inicial desconhecido: o saldo real nao pode ser afirmado.
     openingBalanceCents: integer('opening_balance_cents'),
+    openingBalanceDate: text('opening_balance_date'),
+    // Legado: a conta padrao agora e individual, nas preferencias de cada membro.
     isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
+    // Conta do casal que pode ser usada quando a pessoa nao tem conta propria definida.
+    sharedFallback: integer('shared_fallback', { mode: 'boolean' }).notNull().default(false),
     creditClosingDay: integer('credit_closing_day'),
     creditDueDay: integer('credit_due_day'),
+    creditLimitCents: integer('credit_limit_cents'),
+    // Informado pelo usuario; nunca conta como dinheiro em conta.
+    creditAvailableCents: integer('credit_available_cents'),
+    creditAvailableDate: text('credit_available_date'),
+    // dono|classe|nome: duas pessoas podem ter uma conta com o mesmo nome.
+    identityKey: text('identity_key').notNull().default(''),
     archivedAt: integer('archived_at'),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex('account_household_name_uq').on(t.householdId, t.normalizedName)],
+  (t) => [
+    uniqueIndex('account_identity_uq')
+      .on(t.householdId, t.identityKey)
+      // O Worker anterior grava identity_key vazio no intervalo entre migracao e publicacao.
+      .where(sql`${t.archivedAt} IS NULL AND ${t.identityKey} <> ''`),
+  ],
 );
 
 export const categories = sqliteTable(
@@ -209,6 +230,11 @@ export const financialGoals = sqliteTable(
       .references(() => households.id),
     name: text('name').notNull(),
     kind: text('kind', { enum: ['apartment', 'general'] }).notNull(),
+    normalizedName: text('normalized_name').notNull().default(''),
+    // Nulo: meta do casal. Preenchido: meta individual.
+    ownerMemberId: text('owner_member_id').references(() => householdMembers.id),
+    // Metas gerais usam target_cents; o apartamento soma entrada e custos.
+    targetCents: integer('target_cents'),
     // Todos opcionais: a meta nasce sem valores inventados.
     entryCents: integer('entry_cents'),
     additionalCostsCents: integer('additional_costs_cents'),
@@ -222,7 +248,11 @@ export const financialGoals = sqliteTable(
     createdAt: createdAt(),
     updatedAt: integer('updated_at').notNull(),
   },
-  (t) => [uniqueIndex('goal_household_name_uq').on(t.householdId, t.name)],
+  (t) => [
+    uniqueIndex('goal_active_name_uq')
+      .on(t.householdId, t.normalizedName)
+      .where(sql`${t.status} = 'active' AND ${t.normalizedName} <> ''`),
+  ],
 );
 
 export const goalContributions = sqliteTable(
@@ -237,7 +267,13 @@ export const goalContributions = sqliteTable(
       .references(() => financialGoals.id),
     amountCents: integer('amount_cents').notNull(),
     direction: text('direction', { enum: ['in', 'out'] }).notNull(),
-    kind: text('kind', { enum: ['initial', 'contribution'] }).notNull(),
+    // initial: valor antigo sem local. allocation: dinheiro que ja existia, so foi destinado.
+    // contribution: aporte novo, que conta no realizado do mes.
+    kind: text('kind', { enum: ['initial', 'allocation', 'contribution'] }).notNull(),
+    // Onde o dinheiro esta. Nulo: local nao informado (registros antigos ou aporte sem conta).
+    accountId: text('account_id').references(() => financialAccounts.id),
+    // Transferencia real que acompanhou o aporte, quando houve.
+    transactionId: text('transaction_id').references(() => financialTransactions.id),
     contributionDate: text('contribution_date').notNull(),
     memberId: text('member_id')
       .notNull()
@@ -250,6 +286,7 @@ export const goalContributions = sqliteTable(
   },
   (t) => [
     index('goal_contribution_goal_idx').on(t.goalId, t.status),
+    index('goal_contribution_account_idx').on(t.accountId, t.status),
     check('goal_contribution_positive', sql`${t.amountCents} > 0`),
   ],
 );
@@ -267,6 +304,12 @@ export const recurringEntries = sqliteTable(
     categoryId: text('category_id').references(() => categories.id),
     memberId: text('member_id').references(() => householdMembers.id),
     memberKey: text('member_key').notNull(),
+    // Conta onde a renda costuma cair.
+    accountId: text('account_id').references(() => financialAccounts.id),
+    // irregular: fonte cadastrada, mas fora da renda prevista do mes.
+    frequency: text('frequency', { enum: ['monthly', 'irregular'] })
+      .notNull()
+      .default('monthly'),
     amountCents: integer('amount_cents'),
     scheduleType: text('schedule_type', {
       enum: ['monthly_day', 'nth_weekday_approx', 'monthly_unspecified'],
@@ -444,3 +487,34 @@ export const onboardingSessions = sqliteTable('onboarding_sessions', {
   state: text('state').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });
+
+/**
+ * Diferenca entre o saldo calculado e o informado. Ajustes aprovados entram no saldo derivado
+ * sem reescrever lancamentos nem o saldo inicial.
+ */
+export const balanceReconciliations = sqliteTable(
+  'balance_reconciliations',
+  {
+    id: id(),
+    householdId: text('household_id')
+      .notNull()
+      .references(() => households.id),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => financialAccounts.id),
+    referenceDate: text('reference_date').notNull(),
+    calculatedCents: integer('calculated_cents').notNull(),
+    reportedCents: integer('reported_cents').notNull(),
+    differenceCents: integer('difference_cents').notNull(),
+    status: text('status', { enum: ['pending', 'adjusted', 'dismissed'] })
+      .notNull()
+      .default('pending'),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => householdMembers.id),
+    idempotencyKey: text('idempotency_key').notNull().unique(),
+    createdAt: createdAt(),
+    resolvedAt: integer('resolved_at'),
+  },
+  (t) => [index('reconciliation_account_idx').on(t.accountId, t.status)],
+);

@@ -23,13 +23,21 @@ export interface TransactionDraft {
   resolvedDate?: LocalDate;
   paymentMethod: PaymentMethod;
   installments: number | null;
+  /** Conta escolhida numa resposta: evita reinterpretar o nome quando ha homonimos. */
+  sourceAccountId?: string;
+  destinationAccountId?: string;
+  /** O usuario respondeu que o gasto nao saiu de nenhuma conta cadastrada. */
+  noAccount?: boolean;
 }
 
 export interface LedgerMember {
   id: string;
   name: string;
   defaultAccountId?: string | undefined;
+  defaultCardId?: string | undefined;
 }
+
+export type AccountOwnership = 'member' | 'shared' | 'unassigned';
 
 export interface LedgerAccount {
   id: string;
@@ -37,7 +45,8 @@ export interface LedgerAccount {
   normalizedName: string;
   kind: AccountKind;
   ownerMemberId: string | null;
-  isDefault: boolean;
+  ownership: AccountOwnership;
+  sharedFallback: boolean;
 }
 
 export interface LedgerCategory {
@@ -101,7 +110,10 @@ const GENERIC_ACCOUNT_WORDS = new Set([
   'o',
   'nossa',
   'nosso',
+  'banco',
 ]);
+
+const CARD_WORDS = new Set(['cartao', 'credito']);
 
 const PARTNER_WORDS = new Set([
   'ele',
@@ -125,37 +137,97 @@ export type AccountMatch =
   | { status: 'not_found' }
   | { status: 'ambiguous'; options: LedgerAccount[] };
 
+export interface MatchOptions {
+  /** Pessoa cujas contas tem preferencia quando ha nomes iguais. */
+  memberId?: string | undefined;
+  only?: 'card' | 'cash' | undefined;
+}
+
+function hintWords(hint: string): string[] {
+  return normalizeText(hint).split(' ').filter(Boolean);
+}
+
+function coreWords(hint: string): string[] {
+  return hintWords(hint).filter((w) => !GENERIC_ACCOUNT_WORDS.has(w) && !CARD_WORDS.has(w));
+}
+
+export function hintSignalsCard(hint: string | null): boolean {
+  return hint !== null && hintWords(hint).some((w) => CARD_WORDS.has(w));
+}
+
+/** "no cartao", "no credito": fala do meio de pagamento, sem dizer qual cartao. */
+export function isBareCardHint(hint: string | null): boolean {
+  return hint !== null && hintSignalsCard(hint) && coreWords(hint).length === 0;
+}
+
+const isCard = (account: LedgerAccount): boolean => account.kind === 'credit_card';
+
+/** Com nomes iguais, vale primeiro a conta da pessoa, depois a do casal. */
+function rankByOwner(candidates: LedgerAccount[], memberId: string | undefined): LedgerAccount[] {
+  if (!memberId || candidates.length < 2) return candidates;
+  const own = candidates.filter((a) => a.ownerMemberId === memberId);
+  if (own.length > 0) return own;
+  const shared = candidates.filter((a) => a.ownership === 'shared');
+  return shared.length > 0 ? shared : candidates;
+}
+
 export function matchAccount(
   hint: string | null,
   accounts: readonly LedgerAccount[],
+  options: MatchOptions = {},
 ): AccountMatch {
   if (!hint) return { status: 'no_hint' };
-  const tokens = normalizeText(hint)
-    .split(' ')
-    .filter((token) => token && !GENERIC_ACCOUNT_WORDS.has(token));
-  if (tokens.length === 0) return { status: 'no_hint' };
-  const text = tokens.join(' ');
+  const words = hintWords(hint);
+  const tokens = coreWords(hint);
+  const cardSignal = hintSignalsCard(hint);
+  if (tokens.length === 0 && !cardSignal) return { status: 'no_hint' };
 
-  const exact = accounts.filter((account) => account.normalizedName === text);
-  if (exact.length === 1) return { status: 'found', account: exact[0]! };
-
-  let candidates = accounts.filter((account) =>
-    tokens.every((token) => account.normalizedName.split(' ').includes(token)),
+  const onlyClass = cardSignal
+    ? 'card'
+    : words.includes('conta') || words.includes('debito') || words.includes('pix')
+      ? 'cash'
+      : options.only;
+  const pool = accounts.filter((a) =>
+    onlyClass === 'card' ? isCard(a) : onlyClass === 'cash' ? !isCard(a) : true,
   );
-  if (candidates.length === 0) {
-    if (tokens.includes('reserva') || tokens.includes('poupanca')) {
-      candidates = accounts.filter((a) => a.kind === 'reserve' || a.kind === 'savings');
-    } else if (tokens.includes('cartao') || tokens.includes('credito')) {
-      candidates = accounts.filter((a) => a.kind === 'credit_card');
-    } else if (tokens.includes('dinheiro') || tokens.includes('especie')) {
-      candidates = accounts.filter((a) => a.kind === 'cash');
-    } else if (tokens.includes('conjunta')) {
-      candidates = accounts.filter((a) => a.kind === 'joint');
+
+  let candidates: LedgerAccount[];
+  if (tokens.length === 0) {
+    candidates = pool;
+  } else {
+    const text = tokens.join(' ');
+    candidates = pool.filter((a) => a.normalizedName === text);
+    if (candidates.length === 0) {
+      candidates = pool.filter((a) =>
+        tokens.every((token) => a.normalizedName.split(' ').includes(token)),
+      );
+    }
+    if (candidates.length === 0) {
+      if (tokens.some((t) => ['reserva', 'poupanca', 'cofre', 'cofrinho'].includes(t))) {
+        candidates = pool.filter((a) => a.kind === 'reserve' || a.kind === 'savings');
+      } else if (tokens.includes('dinheiro') || tokens.includes('especie')) {
+        candidates = pool.filter((a) => a.kind === 'cash');
+      } else if (tokens.includes('conjunta')) {
+        candidates = pool.filter((a) => a.kind === 'joint');
+      }
     }
   }
-  if (candidates.length === 1) return { status: 'found', account: candidates[0]! };
-  if (candidates.length > 1) return { status: 'ambiguous', options: candidates };
+
+  const ranked = rankByOwner(candidates, options.memberId);
+  if (ranked.length === 1) return { status: 'found', account: ranked[0]! };
+  if (ranked.length > 1) return { status: 'ambiguous', options: ranked };
   return { status: 'not_found' };
+}
+
+/** Chave de unicidade: pessoas diferentes podem ter contas com o mesmo nome. */
+export function accountIdentityKey(
+  ownership: AccountOwnership,
+  ownerMemberId: string | null,
+  kind: AccountKind,
+  normalizedName: string,
+): string {
+  const owner = ownerMemberId ?? (ownership === 'shared' ? 'shared' : 'unassigned');
+  return `${owner}|${kind === 'credit_card' ? 'card' : 'cash'}|${normalizedName}`;
 }
 
 type DefaultAccount =
@@ -163,29 +235,72 @@ type DefaultAccount =
   | { status: 'none_configured' }
   | { status: 'ambiguous' };
 
+const belongsToOther = (account: LedgerAccount, member: LedgerMember): boolean =>
+  account.ownership === 'member' && account.ownerMemberId !== member.id;
+
+const DAILY_KINDS: readonly AccountKind[] = ['checking', 'joint'];
+
 /**
- * Regra explicita de conta padrao, em ordem:
- * preferencia do membro, conta marcada como padrao, unica conta do membro, unica conta da casa.
+ * Regra de conta para Pix, debito e movimentacao do dia a dia, em ordem:
+ * padrao individual, unica conta propria, conta do casal marcada como alternativa.
+ * Conta pessoal da outra pessoa nunca e escolhida sozinha.
  */
 export function defaultCashAccount(
   member: LedgerMember,
   accounts: readonly LedgerAccount[],
 ): DefaultAccount {
-  const spendable = accounts.filter((a) => a.kind !== 'credit_card' && a.kind !== 'reserve');
+  const spendable = accounts.filter((a) => !isCard(a) && a.kind !== 'reserve');
+  if (spendable.length === 0) return { status: 'none_configured' };
   if (member.defaultAccountId) {
     const preferred = spendable.find((a) => a.id === member.defaultAccountId);
-    if (preferred) return { status: 'found', account: preferred };
+    if (preferred && !belongsToOther(preferred, member)) {
+      return { status: 'found', account: preferred };
+    }
   }
-  const markedDefault = spendable.filter((a) => a.isDefault);
-  if (markedDefault.length === 1) return { status: 'found', account: markedDefault[0]! };
-  const owned = spendable.filter((a) => a.ownerMemberId === member.id);
-  if (owned.length === 1) return { status: 'found', account: owned[0]! };
-  if (spendable.length === 1) return { status: 'found', account: spendable[0]! };
-  return spendable.length === 0 ? { status: 'none_configured' } : { status: 'ambiguous' };
+  const own = spendable.filter((a) => a.ownerMemberId === member.id);
+  const ownDaily = own.filter((a) => DAILY_KINDS.includes(a.kind));
+  if (ownDaily.length === 1) return { status: 'found', account: ownDaily[0]! };
+  if (ownDaily.length === 0 && own.length === 1) return { status: 'found', account: own[0]! };
+  if (own.length > 1) return { status: 'ambiguous' };
+  const fallback = spendable.filter((a) => a.ownership === 'shared' && a.sharedFallback);
+  if (fallback.length === 1) return { status: 'found', account: fallback[0]! };
+  return { status: 'ambiguous' };
 }
 
-function accountList(accounts: readonly LedgerAccount[]): string {
-  return accounts.map((a) => a.name).join(', ');
+type DefaultCard =
+  | { status: 'found'; account: LedgerAccount }
+  | { status: 'none_configured' }
+  | { status: 'ambiguous'; options: LedgerAccount[] };
+
+/** Cartao de quem fez a compra: padrao individual, unico proprio, unico do casal. */
+export function defaultCreditCard(
+  member: LedgerMember,
+  accounts: readonly LedgerAccount[],
+): DefaultCard {
+  const cards = accounts.filter(isCard);
+  if (cards.length === 0) return { status: 'none_configured' };
+  if (member.defaultCardId) {
+    const preferred = cards.find((a) => a.id === member.defaultCardId);
+    if (preferred && !belongsToOther(preferred, member)) {
+      return { status: 'found', account: preferred };
+    }
+  }
+  const own = cards.filter((a) => a.ownerMemberId === member.id);
+  if (own.length === 1) return { status: 'found', account: own[0]! };
+  if (own.length > 1) return { status: 'ambiguous', options: own };
+  const shared = cards.filter((a) => a.ownership === 'shared');
+  if (shared.length === 1) return { status: 'found', account: shared[0]! };
+  return { status: 'ambiguous', options: shared.length > 0 ? shared : cards };
+}
+
+function accountLabel(account: LedgerAccount, context: LedgerContext): string {
+  const owner = account.ownerMemberId
+    ? context.members.find((m) => m.id === account.ownerMemberId)?.name
+    : account.ownership === 'shared'
+      ? 'casal'
+      : undefined;
+  const details = [isCard(account) ? 'cartão' : null, owner].filter(Boolean).join(', ');
+  return details ? `${account.name} (${details})` : account.name;
 }
 
 type MemberResolution = { member: LedgerMember } | { error: string };
@@ -270,8 +385,21 @@ function resolveDate(
   };
 }
 
-function missingAccountQuestion(prefix: string, accounts: readonly LedgerAccount[]): string {
-  return `${prefix} Opções: ${accountList(accounts)}.`;
+function missingAccountQuestion(
+  prefix: string,
+  accounts: readonly LedgerAccount[],
+  context: LedgerContext,
+): string {
+  return `${prefix} Opções: ${accounts.map((a) => accountLabel(a, context)).join(', ')}.`;
+}
+
+/** Contas que fazem sentido oferecer: as da pessoa e do casal; se nao houver, todas. */
+function eligibleFor(
+  member: LedgerMember,
+  accounts: readonly LedgerAccount[],
+): readonly LedgerAccount[] {
+  const mine = accounts.filter((a) => !belongsToOther(a, member));
+  return mine.length > 0 ? mine : accounts;
 }
 
 interface SourceChoice {
@@ -284,18 +412,39 @@ function resolveExpenseSource(
   member: LedgerMember,
   context: LedgerContext,
 ): { choice: SourceChoice } | { outcome: ResolveOutcome } {
-  const cards = context.accounts.filter((a) => a.kind === 'credit_card');
-  const wantsCredit = draft.paymentMethod === 'credit' || (draft.installments ?? 1) > 1;
+  const wantsCredit =
+    draft.paymentMethod === 'credit' ||
+    (draft.installments ?? 1) > 1 ||
+    hintSignalsCard(draft.sourceAccountText);
 
-  const match = matchAccount(draft.sourceAccountText, context.accounts);
+  if (draft.sourceAccountId) {
+    const chosen = context.accounts.find((a) => a.id === draft.sourceAccountId);
+    if (chosen) return { choice: { account: chosen, isCredit: isCard(chosen) } };
+  }
+  if (draft.noAccount && !wantsCredit) return { choice: { account: null, isCredit: false } };
+
+  const hint = isBareCardHint(draft.sourceAccountText) ? null : draft.sourceAccountText;
+  const only =
+    draft.paymentMethod === 'debit' ||
+    draft.paymentMethod === 'pix' ||
+    draft.paymentMethod === 'cash'
+      ? 'cash'
+      : wantsCredit
+        ? 'card'
+        : undefined;
+  const match = matchAccount(hint, context.accounts, { memberId: member.id, only });
   if (match.status === 'found') {
-    return { choice: { account: match.account, isCredit: match.account.kind === 'credit_card' } };
+    return { choice: { account: match.account, isCredit: isCard(match.account) } };
   }
   if (match.status === 'ambiguous') {
     return {
       outcome: needs(
         'source_account',
-        missingAccountQuestion('De qual conta saiu?', match.options),
+        missingAccountQuestion(
+          wantsCredit ? 'Em qual cartão?' : 'De qual conta saiu?',
+          match.options,
+          context,
+        ),
       ),
     };
   }
@@ -311,41 +460,56 @@ function resolveExpenseSource(
       outcome: needs(
         'source_account',
         missingAccountQuestion(
-          `Não achei a conta "${draft.sourceAccountText}". De qual conta saiu?`,
-          context.accounts,
+          `Não achei "${draft.sourceAccountText}". ${wantsCredit ? 'Em qual cartão?' : 'De qual conta saiu?'}`,
+          context.accounts.filter((a) => (wantsCredit ? isCard(a) : true)),
+          context,
         ),
       ),
     };
   }
 
   if (wantsCredit) {
-    if (cards.length === 1) return { choice: { account: cards[0]!, isCredit: true } };
-    if (cards.length === 0) {
+    const card = defaultCreditCard(member, context.accounts);
+    if (card.status === 'found') return { choice: { account: card.account, isCredit: true } };
+    if (card.status === 'none_configured') {
       return {
         outcome: rejected(
           'Compra no cartão ou parcelada precisa de um cartão cadastrado, senão a fatura fica errada. Cadastre com /addconta cartao Nome fecha=3 vence=10 e mande de novo.',
         ),
       };
     }
-    return { outcome: needs('source_account', missingAccountQuestion('Em qual cartão?', cards)) };
+    return {
+      outcome: needs(
+        'source_account',
+        missingAccountQuestion('Em qual cartão?', card.options, context),
+      ),
+    };
   }
 
   if (draft.paymentMethod === 'cash') {
-    const cash = context.accounts.filter((a) => a.kind === 'cash');
+    const cash = eligibleFor(
+      member,
+      context.accounts.filter((a) => a.kind === 'cash'),
+    ).filter((a) => !belongsToOther(a, member));
     if (cash.length === 1) return { choice: { account: cash[0]!, isCredit: false } };
   }
 
   const fallback = defaultCashAccount(member, context.accounts);
-  if (fallback.status === 'found')
+  if (fallback.status === 'found') {
     return { choice: { account: fallback.account, isCredit: false } };
+  }
   if (fallback.status === 'none_configured') return { choice: { account: null, isCredit: false } };
   return {
     outcome: needs(
       'source_account',
-      missingAccountQuestion(
+      `${missingAccountQuestion(
         'De qual conta saiu?',
-        context.accounts.filter((a) => a.kind !== 'reserve'),
-      ),
+        eligibleFor(
+          member,
+          context.accounts.filter((a) => !isCard(a) && a.kind !== 'reserve'),
+        ),
+        context,
+      )} Se não saiu de nenhuma, responda "sem conta".`,
     ),
   };
 }
@@ -363,13 +527,32 @@ function resolveTransferAccounts(
     };
   }
 
-  const cards = context.accounts.filter((a) => a.kind === 'credit_card');
-  let destination: LedgerAccount | undefined;
-  const destinationMatch = matchAccount(draft.destinationAccountText, context.accounts);
-  if (destinationMatch.status === 'found') destination = destinationMatch.account;
-  else if (draft.kind === 'card_payment' && cards.length === 1) destination = cards[0]!;
+  const isPayment = draft.kind === 'card_payment';
+  let destination = context.accounts.find((a) => a.id === draft.destinationAccountId);
+  let destinationOptions: readonly LedgerAccount[] | null = null;
   if (!destination) {
-    const options = draft.kind === 'card_payment' ? cards : context.accounts;
+    const hint =
+      isPayment && isBareCardHint(draft.destinationAccountText)
+        ? null
+        : draft.destinationAccountText;
+    let match = matchAccount(hint, context.accounts, {
+      memberId: member.id,
+      only: isPayment ? 'card' : 'cash',
+    });
+    if (match.status === 'not_found' && !isPayment) {
+      match = matchAccount(hint, context.accounts, { memberId: member.id });
+    }
+    if (match.status === 'found') destination = match.account;
+    else if (match.status === 'ambiguous') destinationOptions = match.options;
+    else if (match.status === 'no_hint' && isPayment) {
+      const card = defaultCreditCard(member, context.accounts);
+      if (card.status === 'found') destination = card.account;
+      else if (card.status === 'ambiguous') destinationOptions = card.options;
+    }
+  }
+  if (!destination) {
+    const options =
+      destinationOptions ?? (isPayment ? context.accounts.filter(isCard) : context.accounts);
     if (options.length === 0) {
       return { outcome: rejected('Ainda não há cartão cadastrado. Use /addconta cartao Nome.') };
     }
@@ -377,22 +560,37 @@ function resolveTransferAccounts(
       outcome: needs(
         'destination_account',
         missingAccountQuestion(
-          draft.kind === 'card_payment' ? 'De qual cartão é a fatura?' : 'Para qual conta foi?',
+          isPayment ? 'De qual cartão é a fatura?' : 'Para qual conta foi?',
           options,
+          context,
         ),
       ),
     };
   }
+  const target = destination;
 
-  const sourceMatch = matchAccount(draft.sourceAccountText, context.accounts);
-  let source: LedgerAccount | undefined;
-  if (sourceMatch.status === 'found') source = sourceMatch.account;
-  else if (sourceMatch.status === 'no_hint') {
-    const fallback = defaultCashAccount(
-      member,
-      context.accounts.filter((a) => a.id !== destination.id),
+  let source = context.accounts.find((a) => a.id === draft.sourceAccountId);
+  let sourceOptions: readonly LedgerAccount[] | null = null;
+  if (!source) {
+    const match = matchAccount(
+      draft.sourceAccountText,
+      context.accounts.filter((a) => a.id !== target.id),
+      { memberId: member.id, only: 'cash' },
     );
-    if (fallback.status === 'found') source = fallback.account;
+    if (match.status === 'found') source = match.account;
+    else if (match.status === 'ambiguous') sourceOptions = match.options;
+    else if (
+      match.status === 'not_found' &&
+      matchAccount(draft.sourceAccountText, context.accounts, { only: 'card' }).status === 'found'
+    ) {
+      return { outcome: rejected('Cartão de crédito não pode ser origem de transferência.') };
+    } else if (match.status === 'no_hint') {
+      const fallback = defaultCashAccount(
+        member,
+        context.accounts.filter((a) => a.id !== target.id),
+      );
+      if (fallback.status === 'found') source = fallback.account;
+    }
   }
   if (!source) {
     return {
@@ -400,19 +598,24 @@ function resolveTransferAccounts(
         'source_account',
         missingAccountQuestion(
           'De qual conta saiu?',
-          context.accounts.filter((a) => a.kind !== 'credit_card' && a.id !== destination.id),
+          sourceOptions ??
+            eligibleFor(
+              member,
+              context.accounts.filter((a) => !isCard(a) && a.id !== target.id),
+            ),
+          context,
         ),
       ),
     };
   }
 
-  if (source.id === destination.id) {
+  if (source.id === target.id) {
     return { outcome: rejected('Origem e destino são a mesma conta; não há o que registrar.') };
   }
-  if (source.kind === 'credit_card') {
+  if (isCard(source)) {
     return { outcome: rejected('Cartão de crédito não pode ser origem de transferência.') };
   }
-  return { source, destination };
+  return { source, destination: target };
 }
 
 /**
@@ -465,29 +668,33 @@ export function resolveDraft(draft: TransactionDraft, context: LedgerContext): R
   }
 
   if (draft.kind === 'income') {
+    const incomeOptions = eligibleFor(
+      member,
+      context.accounts.filter((a) => !isCard(a)),
+    );
+    const chosen = context.accounts.find((a) => a.id === draft.destinationAccountId);
     const match = matchAccount(
       draft.destinationAccountText ?? draft.sourceAccountText,
-      context.accounts,
+      chosen ? [] : context.accounts,
+      { memberId: member.id },
     );
-    let account: LedgerAccount | null = null;
-    if (match.status === 'found') account = match.account;
-    else if (match.status === 'ambiguous' || match.status === 'not_found') {
+    let account: LedgerAccount | null = chosen ?? null;
+    if (!chosen && match.status === 'found') account = match.account;
+    else if (!chosen && (match.status === 'ambiguous' || match.status === 'not_found')) {
       return needs(
         'destination_account',
         missingAccountQuestion(
           'Em qual conta entrou?',
-          context.accounts.filter((a) => a.kind !== 'credit_card'),
+          match.status === 'ambiguous' ? match.options : incomeOptions,
+          context,
         ),
       );
-    } else {
+    } else if (!chosen && !draft.noAccount) {
       const fallback = defaultCashAccount(member, context.accounts);
       if (fallback.status === 'ambiguous') {
         return needs(
           'destination_account',
-          missingAccountQuestion(
-            'Em qual conta entrou?',
-            context.accounts.filter((a) => a.kind !== 'credit_card'),
-          ),
+          missingAccountQuestion('Em qual conta entrou?', incomeOptions, context),
         );
       }
       if (fallback.status === 'found') account = fallback.account;
@@ -565,11 +772,29 @@ export function applySlotAnswer(
     }
     case 'source_account':
     case 'destination_account': {
-      const match = matchAccount(text, context.accounts);
+      if (/^(sem conta|nenhuma|nenhuma delas)$/.test(normalizeText(text))) {
+        return draft.kind === 'expense' || draft.kind === 'income'
+          ? { ...draft, noAccount: true }
+          : null;
+      }
+      const payer = resolveMember(draft.personText, context);
+      const isPayment = draft.kind === 'card_payment';
+      const wantsCard =
+        slot === 'destination_account'
+          ? isPayment
+          : draft.paymentMethod === 'credit' || (draft.installments ?? 1) > 1;
+      const match = matchAccount(text, context.accounts, {
+        memberId: 'member' in payer ? payer.member.id : context.senderMemberId,
+        only: wantsCard
+          ? 'card'
+          : slot === 'source_account' && draft.kind === 'expense'
+            ? undefined
+            : 'cash',
+      });
       if (match.status !== 'found') return null;
       return slot === 'source_account'
-        ? { ...draft, sourceAccountText: match.account.name }
-        : { ...draft, destinationAccountText: match.account.name };
+        ? { ...draft, sourceAccountId: match.account.id }
+        : { ...draft, destinationAccountId: match.account.id };
     }
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import dataset from '../../evals/interpretation.json';
-import { createHarness, withAccounts } from '../fixtures/harness';
+import { createHarness, JENNIFER_ID, withAccounts } from '../fixtures/harness';
 import type { EvalCase } from './golden';
 import { toInterpretation } from './golden';
 
@@ -21,6 +21,7 @@ interface Outcome {
 async function run(evalCase: EvalCase): Promise<Outcome> {
   const h = await createHarness();
   await withAccounts(h);
+  await h.say('/addconta corrente Conta_Jennifer saldo=500', { from: JENNIFER_ID });
   for (const command of evalCase.setup ?? []) await h.say(command);
 
   const configCount = async () => {

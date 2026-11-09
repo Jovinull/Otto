@@ -23,6 +23,7 @@ export type HouseholdSettings = z.infer<typeof HouseholdSettings>;
 
 export const MemberPreferences = z.object({
   defaultAccountId: z.string().optional(),
+  defaultCardId: z.string().optional(),
 });
 export type MemberPreferences = z.infer<typeof MemberPreferences>;
 

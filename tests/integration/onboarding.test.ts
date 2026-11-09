@@ -71,7 +71,12 @@ describe('cadastro guiado', () => {
     expect(h.messaging.last()).toContain('Configuração ativada ✅');
     expect(h.messaging.last()).not.toContain('Não consegui aplicar');
     expect(await h.count('financial_accounts')).toBe(3);
-    expect(await h.count('financial_accounts', 'is_default = 1')).toBe(1);
+    expect(
+      await h.count(
+        'household_members',
+        "json_extract(preferences, '$.defaultAccountId') IS NOT NULL",
+      ),
+    ).toBe(1);
     expect(await h.count('recurring_entries', "kind = 'income'")).toBe(2);
     expect(await h.count('recurring_entries', "kind = 'expense'")).toBe(4);
     expect(await h.count('budgets')).toBe(3);
