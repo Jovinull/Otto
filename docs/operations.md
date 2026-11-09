@@ -32,15 +32,19 @@ Com 30 mensagens financeiras por dia e 20 análises por mês: cerca de **US$ 0,3
 
 ## Capacidade do plano gratuito (medida)
 
-| Medida                                     | Resultado                            | Como foi medido                                 |
-| ------------------------------------------ | ------------------------------------ | ----------------------------------------------- |
-| CPU por evento (sem o tempo do banco)      | mediana 1,2–2,5 ms; pior caso 5,2 ms | `pnpm bench:cpu` (V8 do Node com `node:sqlite`) |
-| Subrequisições por mensagem                | 11–19 comuns; ~32 numa análise       | `tests/integration/concurrency.test.ts`         |
-| Subrequisições do Cron horário no pior dia | 35 com 3 cartões                     | `tests/integration/hourly-budget.test.ts`       |
+| Medida                                     | Resultado                                                                    | Como foi medido                                                       |
+| ------------------------------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| CPU por mensagem em produção               | aquecido: mediana 9 ms; com mensagens espaçadas: 12 a 101 ms (mediana 39 ms) | `wrangler tail`, 08/11/2026                                           |
+| CPU do Cron ocioso em produção             | 8 a 11 ms                                                                    | `wrangler tail`, 08/11/2026                                           |
+| CPU do código sem carga inicial            | 2 a 7 ms                                                                     | `pnpm bench:cpu`; não inclui o custo do runtime nem da partida a frio |
+| Subrequisições por mensagem                | 11–19 comuns; ~32 numa análise                                               | `tests/integration/concurrency.test.ts`                               |
+| Subrequisições do Cron horário no pior dia | 35 com 3 cartões                                                             | `tests/integration/hourly-budget.test.ts`                             |
 
 Limites: 10 ms de CPU e 50 subrequisições por invocação. O Otto só começa um evento novo na mesma invocação se couber o pior caso (34 subrequisições), e só entrega uma mensagem se couber a entrega (3). O que não couber fica para a próxima invocação; o Cron roda a cada minuto. Uma fila de 20 mensagens acumuladas (ex.: depois de uma queda da OpenAI) é drenada em cerca de 10 a 20 minutos.
 
-Ainda depende de observação em produção: CPU real no `workerd` (inclui a inicialização do isolate) e latência do D1. Acompanhe em Workers & Pages → otto → Metrics (CPU time) e com `wrangler tail`.
+**Atenção:** o consumo real fica acima dos 10 ms do plano gratuito, principalmente depois de um período sem mensagens, quando o código é carregado de novo. Até agora todas as execuções terminaram com sucesso. A documentação da Cloudflare diz que há flexibilidade para ultrapassagens eventuais, mas que um Worker que atinge o limite de forma consistente é interrompido, sem definir um número.
+
+Sinal a observar: em Workers & Pages → otto → Metrics, erros **Exceeded CPU Time Limits** (`exceededCpu` nos logs, erro 1102). Se a execução for interrompida, a mensagem já está salva no inbox e o Cron tenta de novo; depois de 9 tentativas o casal recebe "nada foi registrado". Se isso virar rotina, as saídas são reduzir mais dependências ou passar para o plano pago da Cloudflare, o que é uma decisão do casal.
 
 ## Monitoramento
 
