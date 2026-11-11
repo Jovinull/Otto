@@ -98,6 +98,12 @@ const FINANCIAL_TERMS = [
   'santander',
   'bradesco',
   'itau',
+  // Duvidas de uso ("como lanço..."); conferir sozinho e comum demais em conversa.
+  'lancar',
+  'lanco',
+  'lancei',
+  'anotar',
+  'registrar',
 ];
 
 export function mentionsAssistant(text: string): boolean {

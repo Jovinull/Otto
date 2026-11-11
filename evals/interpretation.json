@@ -1056,6 +1056,169 @@
         "intents": ["query_goal"],
         "write": "none"
       }
+    },
+    {
+      "id": "fatura-veio-confere",
+      "kind": "pergunta",
+      "text": "Otto, a fatura do Nubank veio R$ 312,40. Confere?",
+      "setup": ["/addconta cartao Nubank fecha=3 vence=10"],
+      "golden": {
+        "intent": "check_invoice",
+        "invoice": {
+          "card_text": "Nubank",
+          "amount_text": "312,40"
+        }
+      },
+      "expect": {
+        "intents": ["check_invoice"],
+        "invoiceAmount": 31240,
+        "write": "none"
+      }
+    },
+    {
+      "id": "fatura-chegou-bate",
+      "kind": "pergunta",
+      "text": "Chegou a fatura do cartão, deu 850. Bate com o que a gente lançou?",
+      "setup": ["/addconta cartao Nubank fecha=3 vence=10"],
+      "golden": {
+        "intent": "check_invoice",
+        "invoice": {
+          "card_text": null,
+          "amount_text": "850"
+        }
+      },
+      "expect": {
+        "intents": ["check_invoice"],
+        "invoiceAmount": 85000,
+        "write": "none"
+      }
+    },
+    {
+      "id": "conferir-sem-valor",
+      "kind": "incompleto",
+      "text": "Otto, me ajuda a conferir a fatura do Nubank",
+      "setup": ["/addconta cartao Nubank fecha=3 vence=10"],
+      "golden": {
+        "intent": "check_invoice",
+        "invoice": {
+          "card_text": "Nubank",
+          "amount_text": null
+        }
+      },
+      "expect": {
+        "intents": ["check_invoice", "query_invoices"],
+        "invoiceAmount": null,
+        "write": "none"
+      }
+    },
+    {
+      "id": "paguei-fatura-nao-confere",
+      "kind": "registro",
+      "text": "Paguei a fatura do Nubank, 312,40.",
+      "setup": [
+        "/addconta cartao Nubank fecha=3 vence=10",
+        "/addconta corrente Principal saldo=2000 padrao"
+      ],
+      "golden": {
+        "intent": "register_transfer",
+        "transactions": [
+          {
+            "kind": "card_payment",
+            "amount_text": "312,40",
+            "description": "fatura",
+            "destination_account_text": "Nubank"
+          }
+        ]
+      },
+      "expect": {
+        "intents": ["register_transfer"],
+        "amounts": [31240],
+        "kinds": ["card_payment"],
+        "write": "transaction"
+      }
+    },
+    {
+      "id": "como-parcelado",
+      "kind": "pergunta",
+      "text": "Otto, como eu lanço uma compra parcelada no cartão?",
+      "golden": {
+        "intent": "how_to",
+        "help_topic": "card_purchase"
+      },
+      "expect": {
+        "intents": ["how_to"],
+        "helpTopics": ["card_purchase"],
+        "write": "none"
+      }
+    },
+    {
+      "id": "como-guardar-meta",
+      "kind": "pergunta",
+      "text": "Como faço pra colocar dinheiro na meta da viagem?",
+      "golden": {
+        "intent": "how_to",
+        "help_topic": "goal_money"
+      },
+      "expect": {
+        "intents": ["how_to"],
+        "helpTopics": ["goal_money"],
+        "write": "none"
+      }
+    },
+    {
+      "id": "fatura-chegou-o-que-faco",
+      "kind": "pergunta",
+      "text": "Otto, quando a fatura chegar o que eu faço?",
+      "golden": {
+        "intent": "how_to",
+        "help_topic": "check_invoice"
+      },
+      "expect": {
+        "intents": ["how_to"],
+        "helpTopics": ["check_invoice", "pay_invoice"],
+        "write": "none"
+      }
+    },
+    {
+      "id": "como-apagar",
+      "kind": "pergunta",
+      "text": "Lancei um gasto errado, como eu apago?",
+      "golden": {
+        "intent": "how_to",
+        "help_topic": "correct"
+      },
+      "expect": {
+        "intents": ["how_to", "correct_transaction"],
+        "write": "none"
+      }
+    },
+    {
+      "id": "como-economizar-e-analise",
+      "kind": "pergunta",
+      "text": "Otto, como a gente faz pra economizar mais esse mês?",
+      "golden": {
+        "intent": "request_analysis"
+      },
+      "expect": {
+        "intents": ["request_analysis"],
+        "write": "none"
+      }
+    },
+    {
+      "id": "como-esta-fatura",
+      "kind": "pergunta",
+      "text": "Como está a fatura do Nubank?",
+      "setup": ["/addconta cartao Nubank fecha=3 vence=10"],
+      "golden": {
+        "intent": "query_invoices",
+        "query": {
+          "account_text": "Nubank"
+        }
+      },
+      "expect": {
+        "intents": ["query_invoices"],
+        "write": "none"
+      }
     }
   ]
 }

@@ -119,9 +119,10 @@ describe('periodos', () => {
     });
   });
 
-  it('calcula n-esimo dia util sem feriados', () => {
-    // 01/11/2026 e domingo; o quinto dia de semana e sexta 06/11.
-    expect(nthWeekdayApprox('2026-11', 5)).toBe('2026-11-06');
+  it('calcula n-esimo dia util pulando feriados nacionais', () => {
+    // 01/11/2026 e domingo e 02/11 e Finados: o quinto dia util e 09/11.
+    expect(nthWeekdayApprox('2026-11', 5)).toBe('2026-11-09');
+    expect(nthWeekdayApprox('2026-12', 5)).toBe('2026-12-07');
   });
 
   it('interpreta mes por nome', () => {

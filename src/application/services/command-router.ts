@@ -68,7 +68,9 @@ import { onboardingCommand } from './onboarding';
 import { cardDays, cardStatement, invoicesReport } from '../queries/cards';
 import { cycleForInstallment } from '../../domain/finance/card-cycle';
 import { aiSpend } from './ai-governor';
-import { commandsText, helpText, onboardingChecklist } from './help';
+import { commandsText, hasHelpTopic, helpText, onboardingChecklist } from './help';
+import { howToAnswer, topicsFromText, unknownCommand } from './guide';
+import { invoiceCheck } from '../queries/invoice-check';
 
 interface ParsedOptions {
   options: Map<string, string>;
@@ -364,8 +366,12 @@ export async function handleCommand(
   switch (command) {
     case 'ajuda':
     case 'start':
-    case 'help':
-      return replyOnly(helpText(rest[0] ?? null));
+    case 'help': {
+      // "/ajuda fatura": sem tema fixo, responde com o guia do assunto, usando o cadastro.
+      const [topic] =
+        rest.length > 0 && !hasHelpTopic(rest[0]!) ? topicsFromText(rest.join(' ')) : [];
+      return replyOnly(topic ? await howToAnswer(deps, actor, topic) : helpText(rest[0] ?? null));
+    }
     case 'comandos':
       return replyOnly(commandsText());
     case 'id':
@@ -403,10 +409,18 @@ export async function handleCommand(
       );
     case 'metas':
       return replyOnly(await goalReport(deps, scope, actor.today));
-    case 'fatura':
+    case 'fatura': {
+      // "/fatura Santander 300": confere o valor que veio do banco.
+      const tokens = rest.filter((t) => normalizeText(t) !== 'r$');
+      const amount = tokens.length > 0 ? parseBRL(tokens.at(-1)!) : null;
+      if (amount?.status === 'ok') {
+        const cardText = tokens.slice(0, -1).join(' ').replace(/^@/, '') || null;
+        return replyOnly(await invoiceCheck(deps, actor, cardText, amount.cents));
+      }
       return replyOnly(
         await invoicesReport(deps.db, scope, actor.today, rest.length ? rest.join(' ') : null),
       );
+    }
     case 'parcelas':
       return replyOnly(await installmentsReport(deps, actor));
     case 'ia':
@@ -761,7 +775,7 @@ export async function handleCommand(
       );
     }
     default:
-      return replyOnly('Não conheço esse comando. Veja /ajuda.');
+      return replyOnly(unknownCommand(command));
   }
 }
 

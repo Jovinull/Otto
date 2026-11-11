@@ -100,6 +100,8 @@ export function interpretation(
     correction: null,
     purchase: null,
     account: null,
+    invoice: null,
+    help_topic: null,
     ...overrides,
   };
 }

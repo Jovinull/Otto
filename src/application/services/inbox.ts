@@ -19,6 +19,7 @@ import { checkInterpretGate, recordUsage } from './ai-governor';
 import { handleCommand } from './command-router';
 import { routeIntent } from './intent-router';
 import { mentionsAssistant, shouldInterpret } from './message-filter';
+import { notUnderstood } from './guide';
 import { handleButton, handlePendingReply } from './pending';
 import { aiBudgetNotice, aiUnavailableNotice } from './tone';
 import type { DueDelivery } from '../jobs/outbox';
@@ -372,7 +373,7 @@ async function interpretWithAi(
     return addressed
       ? {
           statements: [],
-          replies: [{ text: 'Não consegui entender essa. Pode reformular? Nada foi registrado.' }],
+          replies: [{ text: notUnderstood(text) }],
         }
       : { statements: [], replies: [] };
   }

@@ -77,6 +77,8 @@ export function toInterpretation(golden: EvalCase['golden']): Interpretation {
       : null,
     correction: golden.correction ?? null,
     purchase: golden.purchase ?? null,
+    invoice: golden.invoice ?? null,
+    help_topic: golden.help_topic ?? null,
     account: golden.account
       ? {
           name_text: null,

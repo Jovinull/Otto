@@ -254,10 +254,11 @@ describe('alertas e confiabilidade', () => {
   it('26. alerta de vencimento', async () => {
     await say('/gasto 300 tenis cartao @Santander 25/10/2026');
     h.messaging.sent = [];
-    const instant = Date.UTC(2026, 10, 25, 12);
+    // Vence dia 28, um sabado: passa para 30/11, e o aviso sai tres dias antes.
+    const instant = Date.UTC(2026, 10, 27, 12);
     h.setNow(instant);
     await runHourly(h.fresh(), instant);
-    expect(h.messaging.texts().join('\n')).toContain('Fatura Santander: R$ 300,00');
+    expect(h.messaging.texts().join('\n')).toContain('Fatura Santander: R$ 300,00 (30/11)');
   });
 
   it('27. alerta de meta', async () => {

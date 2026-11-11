@@ -100,13 +100,70 @@ export function dayInPeriod(period: Period, day: number): LocalDate {
   return `${period}-${String(clamped).padStart(2, '0')}`;
 }
 
-/** N-esimo dia de segunda a sexta. Nao considera feriados: sempre exibir como aproximado. */
+/** Domingo de Pascoa (algoritmo de Meeus/Jones/Butcher). */
+function easterSunday(year: number): LocalDate {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+const FIXED_HOLIDAYS = [
+  '01-01',
+  '04-21',
+  '05-01',
+  '09-07',
+  '10-12',
+  '11-02',
+  '11-15',
+  '11-20',
+  '12-25',
+];
+const holidayCache = new Map<number, Set<LocalDate>>();
+
+/**
+ * Feriados nacionais oficiais. Carnaval e Corpus Christi ficam de fora: sao ponto facultativo, e
+ * emissores como o Mercado Pago mantem o vencimento neles. Feriados locais tambem ficam de fora.
+ */
+function bankHolidays(year: number): Set<LocalDate> {
+  let set = holidayCache.get(year);
+  if (!set) {
+    const easter = easterSunday(year);
+    set = new Set([...FIXED_HOLIDAYS.map((day) => `${year}-${day}`), addDays(easter, -2)]);
+    holidayCache.set(year, set);
+  }
+  return set;
+}
+
+export function isBusinessDay(date: LocalDate): boolean {
+  const weekday = weekdayOf(date);
+  return weekday !== 0 && weekday !== 6 && !bankHolidays(Number(date.slice(0, 4))).has(date);
+}
+
+/** O proprio dia, se for util; senao o proximo dia util. Vencimento em dia sem banco passa para ele. */
+export function nextBusinessDay(date: LocalDate): LocalDate {
+  let current = date;
+  while (!isBusinessDay(current)) current = addDays(current, 1);
+  return current;
+}
+
+/** N-esimo dia util, sem feriados nacionais. Feriados locais nao entram: exibir como aproximado. */
 export function nthWeekdayApprox(period: Period, n: number): LocalDate {
   let date = `${period}-01`;
   let count = 0;
   for (;;) {
-    const weekday = weekdayOf(date);
-    if (weekday !== 0 && weekday !== 6) {
+    if (isBusinessDay(date)) {
       count += 1;
       if (count === n) return date;
     }
