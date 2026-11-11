@@ -16,6 +16,7 @@ Sem IA (sempre funciona):
 /configurar faz o cadastro guiado; /configurar status mostra o que falta.
 /comandos lista todos os comandos.
 
+Dúvida? Pergunte: "Otto, como confiro a fatura?"
 Mais detalhes: /ajuda gastos, /ajuda contas, /ajuda editar, /ajuda orcamento, /ajuda meta, /ajuda recorrentes, /ajuda opcoes`;
 
 const TOPICS: Record<string, string> = {
@@ -34,6 +35,8 @@ Estornar: /estornar a1b2c3 (pede confirmação; vale também para aportes)`,
 A conta de outra pessoa nunca é escolhida sozinha.
 Sem saldo inicial eu mostro só o que foi movimentado aqui, nunca um saldo real.
 /fatura mostra cada fatura quando o cartão tem fecha= e vence=.
+/fatura Nubank 300 confere o valor que veio do banco com as compras registradas.
+Vencimento em fim de semana ou feriado passa para o próximo dia útil.
 Juros e multas: lance como gasto no cartão, ex.: /gasto 12,90 juros @Nubank.`,
   editar: `Editar cadastros
 /editconta Nubank fecha=3 vence=10 · /editconta Nubank saldo=1500 (saldo=? apaga)
@@ -62,7 +65,7 @@ Apartamento: /meta entrada=80000 custos=10000 prazo=12/2027 aporte=1500 reserva=
 /renda 4200 util=5 @Nubank [nome=Freelance] [de=Nome] [irregular]
 /recebi [nome] [valor]: marca a renda como recebida
 /compromissos mostra o que falta pagar e receber no mês
-util=5 é aproximado: não considero feriados.
+util=5 considera fins de semana e feriados nacionais; feriados locais não.
 Nada é marcado como pago sozinho: avise com "paguei o aluguel, 1200".`,
   opcoes: `Preferências
 /tom neutro|amigavel|firme
@@ -90,7 +93,7 @@ Consultas
 /contas — todas · /minhascontas [Nome] — as suas
 /compromissos — contas a pagar e renda do mês
 /orcamento [categoria] · /metas · /meta NOME
-/fatura [cartão] · /parcelas
+/fatura [cartão] [valor] — faturas; com valor, confere · /parcelas
 /ultimos [N] · /categorias · /analise [pergunta]
 
 Cadastro
@@ -125,6 +128,10 @@ Sistema
 
 export function commandsText(): string {
   return COMMANDS_TEXT;
+}
+
+export function hasHelpTopic(topic: string): boolean {
+  return topic.toLowerCase() in TOPICS;
 }
 
 export function helpText(topic: string | null): string {

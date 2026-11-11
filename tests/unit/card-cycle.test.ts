@@ -14,6 +14,7 @@ describe('ciclo da fatura', () => {
       closingPeriod: '2026-11',
       closingDate: '2026-11-03',
       dueDate: '2026-11-10',
+      nominalDueDate: '2026-11-10',
     });
   });
 
@@ -26,12 +27,29 @@ describe('ciclo da fatura', () => {
     expect(cycleForPurchase('2026-12-20', DAYS)).toEqual({
       closingPeriod: '2027-01',
       closingDate: '2027-01-03',
-      dueDate: '2027-01-10',
+      // 10/01/2027 e domingo: o vencimento passa para segunda.
+      dueDate: '2027-01-11',
+      nominalDueDate: '2027-01-10',
     });
   });
 
   it('vencimento antes do fechamento cai no mes seguinte', () => {
-    expect(cycleClosingIn('2026-11', { closingDay: 25, dueDay: 5 }).dueDate).toBe('2026-12-05');
+    expect(cycleClosingIn('2026-10', { closingDay: 25, dueDay: 5 }).dueDate).toBe('2026-11-05');
+  });
+
+  it('vencimento em fim de semana ou feriado nacional passa para o proximo dia util', () => {
+    const due = (period: string, dueDay: number) =>
+      cycleClosingIn(period, { closingDay: 2, dueDay }).dueDate;
+    // Caso real do Mercado Pago: 07/02/2027 e domingo; o carnaval (08 e 09/02) nao adia.
+    expect(due('2027-02', 7)).toBe('2027-02-08');
+    expect(due('2026-12', 5)).toBe('2026-12-07');
+    // 25/12/2026 e sexta e feriado.
+    expect(due('2026-12', 25)).toBe('2026-12-28');
+    // Sexta-feira Santa de 2027: 26/03.
+    expect(due('2027-03', 26)).toBe('2027-03-29');
+    // 20/11 e feriado nacional.
+    expect(due('2026-11', 20)).toBe('2026-11-23');
+    expect(due('2026-11', 10)).toBe('2026-11-10');
   });
 
   it('fechamento no dia 31 se ajusta a meses curtos', () => {

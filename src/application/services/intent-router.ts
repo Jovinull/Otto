@@ -31,6 +31,8 @@ import {
 } from '../commands/goals';
 import { reportBalance } from '../commands/reconcile';
 import { invoicesReport } from '../queries/cards';
+import { invoiceCheck } from '../queries/invoice-check';
+import { howToAnswer, notUnderstood } from './guide';
 import { accountFreeReport, coupleStatus, personalStatus, resolveMember } from '../queries/status';
 import { defaultAccountCommand } from './command-router';
 import { recordDrafts } from '../commands/record-transactions';
@@ -354,9 +356,31 @@ export async function routeIntent(
       return replyOnly(await coupleStatus(deps, actor));
 
     case 'query_invoices':
-      return replyOnly(
-        await invoicesReport(deps.db, scope, today, interpretation.query?.account_text ?? null),
-      );
+    case 'check_invoice': {
+      const cardText =
+        interpretation.invoice?.card_text ?? interpretation.query?.account_text ?? null;
+      const amountText = interpretation.invoice?.amount_text ?? null;
+      if (amountText === null) {
+        const report = await invoicesReport(deps.db, scope, today, cardText);
+        return replyOnly(
+          interpretation.intent === 'check_invoice'
+            ? `${report}
+
+Para conferir, me diga o valor que veio: "a fatura veio 300" ou /fatura ${cardText ?? 'Cartão'} 300.`
+            : report,
+        );
+      }
+      const parsed = parseBRL(amountText);
+      if (parsed.status !== 'ok' || !amountAppearsInText(amountText, message)) {
+        return replyOnly(
+          `Não consegui confirmar o valor. Use /fatura ${cardText ?? 'Cartão'} 300,00.`,
+        );
+      }
+      return replyOnly(await invoiceCheck(deps, actor, cardText, parsed.cents));
+    }
+
+    case 'how_to':
+      return replyOnly(await howToAnswer(deps, actor, interpretation.help_topic));
 
     case 'query_free_balance': {
       const accountText = interpretation.query?.account_text;
@@ -585,9 +609,7 @@ export async function routeIntent(
       return replyOnly(await analysisAnswer(deps, scope, actor.member.id, today, message));
 
     case 'unknown':
-      return addressed
-        ? replyOnly('Não entendi. Pode reformular? Se preferir, /ajuda lista os comandos.')
-        : { statements: [], replies: [] };
+      return addressed ? replyOnly(notUnderstood(message)) : { statements: [], replies: [] };
 
     case 'not_financial':
       return { statements: [], replies: [] };

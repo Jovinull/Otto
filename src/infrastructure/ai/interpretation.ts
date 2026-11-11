@@ -13,6 +13,7 @@ export const INTENTS = [
   'query_status_personal',
   'query_status_couple',
   'query_invoices',
+  'check_invoice',
   'query_free_balance',
   'create_account',
   'set_default_account',
@@ -32,6 +33,7 @@ export const INTENTS = [
   'cancel_action',
   'consult_purchase',
   'request_analysis',
+  'how_to',
   'not_financial',
   'unknown',
 ] as const;
@@ -126,6 +128,33 @@ const Purchase = z.strictObject({
   category_slug: nullableText,
 });
 
+const Invoice = z.strictObject({
+  card_text: nullableText,
+  amount_text: nullableText,
+});
+
+export const HELP_TOPICS = [
+  'expense',
+  'card_purchase',
+  'income',
+  'transfer',
+  'pay_invoice',
+  'check_invoice',
+  'goal',
+  'goal_money',
+  'budget',
+  'fixed_bills',
+  'accounts',
+  'balance_check',
+  'correct',
+  'shared',
+  'reports',
+  'notifications',
+  'setup',
+  'other',
+] as const;
+export type HelpTopic = (typeof HELP_TOPICS)[number];
+
 export const Interpretation = z.strictObject({
   intent: z.enum(INTENTS),
   confidence: z.enum(['high', 'medium', 'low']),
@@ -137,6 +166,8 @@ export const Interpretation = z.strictObject({
   correction: Correction.nullable(),
   purchase: Purchase.nullable(),
   account: Account.nullable(),
+  invoice: Invoice.nullable(),
+  help_topic: z.enum(HELP_TOPICS).nullable(),
 });
 export type Interpretation = z.infer<typeof Interpretation>;
 export type TransactionItem = z.infer<typeof TransactionItem>;

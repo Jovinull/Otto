@@ -368,7 +368,7 @@ describe('recorrencia', () => {
     expect(
       expectedDate({ scheduleType: 'nth_weekday_approx', scheduleValue: 5 }, '2026-11'),
     ).toEqual({
-      date: '2026-11-06',
+      date: '2026-11-09',
       approximate: true,
     });
     expect(

@@ -154,6 +154,8 @@ const empty = {
   commitment: null,
   correction: null,
   purchase: null,
+  invoice: null,
+  help_topic: null,
   confidence: 'high' as const,
 };
 

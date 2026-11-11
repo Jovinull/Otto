@@ -1,17 +1,20 @@
 import type { LocalDate, Period } from '../../shared/dates';
-import { addMonths, dayInPeriod, periodOf } from '../../shared/dates';
+import { addMonths, dayInPeriod, nextBusinessDay, periodOf } from '../../shared/dates';
 
 /**
  * Regra de ciclo adotada (documentada em docs/domain.md): compras feitas ate a vespera do dia
  * de fechamento entram na fatura que fecha naquele mes; compras no dia do fechamento ou depois
  * vao para a fatura seguinte. O vencimento cai no mesmo mes do fechamento se o dia de vencimento
- * for maior que o de fechamento; caso contrario, no mes seguinte.
+ * for maior que o de fechamento; caso contrario, no mes seguinte. Vencimento em fim de semana ou
+ * feriado nacional passa para o proximo dia util, como fazem os bancos.
  */
 export interface CardCycle {
   /** Mes (YYYY-MM) em que a fatura fecha: identifica o ciclo. */
   closingPeriod: Period;
   closingDate: LocalDate;
   dueDate: LocalDate;
+  /** Dia do contrato, antes de passar para o dia util. */
+  nominalDueDate: LocalDate;
 }
 
 export interface CardDays {
@@ -21,10 +24,12 @@ export interface CardDays {
 
 export function cycleClosingIn(period: Period, days: CardDays): CardCycle {
   const duePeriod = days.dueDay > days.closingDay ? period : addMonths(period, 1);
+  const nominalDueDate = dayInPeriod(duePeriod, days.dueDay);
   return {
     closingPeriod: period,
     closingDate: dayInPeriod(period, days.closingDay),
-    dueDate: dayInPeriod(duePeriod, days.dueDay),
+    dueDate: nextBusinessDay(nominalDueDate),
+    nominalDueDate,
   };
 }
 

@@ -12,7 +12,7 @@ import {
   installments,
 } from '../../infrastructure/database/schema';
 import type { LocalDate } from '../../shared/dates';
-import { formatShortDate, monthName } from '../../shared/dates';
+import { formatShortDate, monthName, weekdayOf } from '../../shared/dates';
 import { formatBRL } from '../../shared/money';
 import { normalizeText } from '../../shared/text';
 import type { Account, Scope } from '../context';
@@ -27,6 +27,16 @@ export interface CardStatement {
   card: Account;
   invoices: Invoice[];
   creditCents: number;
+  items: CardInvoiceItem[];
+}
+
+export interface CardInvoiceItem {
+  /** Lancamento de origem; null para o saldo devedor informado no cadastro. */
+  transactionId: string | null;
+  closingPeriod: string;
+  date: LocalDate;
+  description: string;
+  amountCents: number;
 }
 
 /** Faturas de um cartao a partir das compras, parcelas e pagamentos confirmados. */
@@ -41,7 +51,12 @@ export async function cardStatement(
   const householdId = scope.household.id;
   const [purchases, payments] = await db.batch([
     db
-      .select({ id: tx.id, amountCents: tx.amountCents, date: tx.financialDate })
+      .select({
+        id: tx.id,
+        amountCents: tx.amountCents,
+        date: tx.financialDate,
+        description: tx.description,
+      })
       .from(tx)
       .where(
         and(
@@ -73,6 +88,7 @@ export async function cardStatement(
             transactionId: installmentPlans.transactionId,
             sequence: installments.sequence,
             amountCents: installments.amountCents,
+            installmentCount: installmentPlans.installmentCount,
           })
           .from(installments)
           .innerJoin(installmentPlans, eq(installments.planId, installmentPlans.id))
@@ -84,28 +100,56 @@ export async function cardStatement(
           );
 
   const split = new Set(parts.map((p) => p.transactionId));
-  const dateOf = new Map(purchases.map((p) => [p.id, p.date]));
-  const charges: Charge[] = [
+  const byId = new Map(purchases.map((p) => [p.id, p]));
+  const items: CardInvoiceItem[] = [
     ...purchases
       .filter((p) => !split.has(p.id))
       .map((p) => ({
+        transactionId: p.id,
         closingPeriod: cycleForPurchase(p.date, days).closingPeriod,
+        date: p.date,
+        description: p.description,
         amountCents: p.amountCents,
       })),
-    ...parts.map((part) => ({
-      closingPeriod: cycleForInstallment(dateOf.get(part.transactionId)!, part.sequence, days)
-        .closingPeriod,
-      amountCents: part.amountCents,
-    })),
+    ...parts.map((part) => {
+      const purchase = byId.get(part.transactionId)!;
+      return {
+        transactionId: purchase.id,
+        closingPeriod: cycleForInstallment(purchase.date, part.sequence, days).closingPeriod,
+        date: purchase.date,
+        description: `${purchase.description} (parcela ${part.sequence}/${part.installmentCount})`,
+        amountCents: part.amountCents,
+      };
+    }),
   ];
+  const charges: Charge[] = items.map(({ closingPeriod, amountCents }) => ({
+    closingPeriod,
+    amountCents,
+  }));
   if (card.openingBalanceCents !== null && card.openingBalanceCents < 0) {
+    const closingPeriod = cycleForPurchase(card.openingBalanceDate ?? today, days).closingPeriod;
+    const amountCents = -card.openingBalanceCents;
     charges.push({
-      closingPeriod: cycleForPurchase(card.openingBalanceDate ?? today, days).closingPeriod,
-      amountCents: -card.openingBalanceCents,
+      closingPeriod,
+      amountCents,
+    });
+    items.push({
+      transactionId: null,
+      closingPeriod,
+      date: card.openingBalanceDate ?? today,
+      description: 'Saldo devedor informado',
+      amountCents,
     });
   }
   const { invoices, creditCents } = buildInvoices(charges, payments, days, today);
-  return { card, invoices, creditCents };
+  return { card, invoices, creditCents, items };
+}
+
+/** Explica por que o vencimento nao caiu no dia do contrato. */
+export function dueShiftNote(invoice: Pick<Invoice, 'dueDate' | 'nominalDueDate'>): string {
+  const weekday = weekdayOf(invoice.nominalDueDate);
+  const reason = weekday === 0 ? 'cai num domingo' : weekday === 6 ? 'cai num sábado' : 'é feriado';
+  return `O vencimento de ${formatShortDate(invoice.nominalDueDate)} ${reason}: passa para ${formatShortDate(invoice.dueDate)}.`;
 }
 
 const STATUS_LABEL = {
@@ -118,6 +162,7 @@ export function describeStatement(statement: CardStatement, today: LocalDate): s
   const { card, invoices } = statement;
   const days = cardDays(card)!;
   const lines = [`💳 ${card.name} (fecha dia ${days.closingDay}, vence dia ${days.dueDay})`];
+
   const closed = invoices.filter((i) => i.status !== 'current' && i.status !== 'future');
   const lastClosed = closed.at(-1);
   const overdue = closed.filter((i) => i.remainingCents > 0 && i.dueDate < today);
@@ -150,6 +195,11 @@ export function describeStatement(statement: CardStatement, today: LocalDate): s
     );
   }
   if (statement.creditCents > 0) lines.push(`Crédito a favor: ${formatBRL(statement.creditCents)}`);
+  // So para as faturas mostradas acima, sem citar parcelas futuras.
+  const shifted = [lastClosed?.remainingCents ? lastClosed : undefined, current].find(
+    (i) => i !== undefined && i.dueDate !== i.nominalDueDate,
+  );
+  if (shifted) lines.push(dueShiftNote(shifted));
   return lines.join('\n');
 }
 

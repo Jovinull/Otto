@@ -55,7 +55,8 @@ describe('faturas do cartao', () => {
     const dates = await h.query<{ due_date: string }>(
       'SELECT due_date FROM installments ORDER BY sequence',
     );
-    expect(dates.map((d) => d.due_date)).toEqual(['2026-12-10', '2027-01-10', '2027-02-10']);
+    // 10/01/2027 e domingo: a parcela vence na segunda.
+    expect(dates.map((d) => d.due_date)).toEqual(['2026-12-10', '2027-01-11', '2027-02-10']);
   });
 
   it('cartao sem dias cadastrados nao inventa vencimento', async () => {

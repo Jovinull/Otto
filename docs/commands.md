@@ -18,23 +18,23 @@ Todos funcionam sem IA. Nomes com espaço podem ser escritos como foram cadastra
 
 ## Consultas
 
-| Comando                  | O que faz                                                          |
-| ------------------------ | ------------------------------------------------------------------ |
-| `/statuspessoal [Nome]`  | renda, gastos, contas, cartões, metas e valor potencialmente livre |
-| `/statuscasal`           | o mesmo para o casal, sem somar conta compartilhada duas vezes     |
-| `/resumo [MM/AAAA]`      | resumo do mês                                                      |
-| `/semana`                | semana atual                                                       |
-| `/comparar`              | mês atual contra o anterior                                        |
-| `/contas`                | todas as contas e cartões, com reservado e livre                   |
-| `/minhascontas [Nome]`   | contas e cartões da pessoa, com os padrões marcados                |
-| `/compromissos`          | contas a pagar e renda prevista e recebida no mês                  |
-| `/orcamento [categoria]` | situação dos orçamentos                                            |
-| `/metas`, `/meta NOME`   | progresso e onde está o dinheiro                                   |
-| `/fatura [cartão]`       | faturas: total, pago e pendente                                    |
-| `/parcelas`              | parcelamentos ativos                                               |
-| `/ultimos [N]`           | últimos lançamentos, com código                                    |
-| `/categorias`            | categorias e códigos                                               |
-| `/analise [pergunta]`    | análise do mês                                                     |
+| Comando                    | O que faz                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `/statuspessoal [Nome]`    | renda, gastos, contas, cartões, metas e valor potencialmente livre           |
+| `/statuscasal`             | o mesmo para o casal, sem somar conta compartilhada duas vezes               |
+| `/resumo [MM/AAAA]`        | resumo do mês                                                                |
+| `/semana`                  | semana atual                                                                 |
+| `/comparar`                | mês atual contra o anterior                                                  |
+| `/contas`                  | todas as contas e cartões, com reservado e livre                             |
+| `/minhascontas [Nome]`     | contas e cartões da pessoa, com os padrões marcados                          |
+| `/compromissos`            | contas a pagar e renda prevista e recebida no mês                            |
+| `/orcamento [categoria]`   | situação dos orçamentos                                                      |
+| `/metas`, `/meta NOME`     | progresso e onde está o dinheiro                                             |
+| `/fatura [cartão] [valor]` | faturas: total, pago e pendente; com o valor do banco, confere item por item |
+| `/parcelas`                | parcelamentos ativos                                                         |
+| `/ultimos [N]`             | últimos lançamentos, com código                                              |
+| `/categorias`              | categorias e códigos                                                         |
+| `/analise [pergunta]`      | análise do mês                                                               |
 
 ## Contas, renda e contas fixas
 
@@ -91,6 +91,8 @@ Tudo isso também funciona escrevendo normalmente. Exemplos:
 
 - "Gastei 27 reais com Uber", "Comprei um tênis de 300 no cartão em 3 vezes"
 - "Paguei R$ 300 da fatura do PicPay", "A fatura do Nubank foi paga"
+- "A fatura do Nubank veio 312,40, confere?"
+- "Como lanço uma compra parcelada?", "O que eu faço quando a fatura chegar?"
 - "Meu salário caiu", "Recebi só 2.000 do salário"
 - "Guardei 500 para a viagem no Cofre", "Tirei 200 da reserva de emergência"
 - "Meu Nubank está com 830 agora"

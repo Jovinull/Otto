@@ -11,6 +11,9 @@ export interface Expectation {
   dates?: string[];
   correctionValue?: number;
   purchaseAmount?: number;
+  /** Valor informado da fatura a conferir; null exige que o modelo nao invente. */
+  invoiceAmount?: number | null;
+  helpTopics?: string[];
 }
 
 /** Categorias de erro usadas no relatorio da avaliacao. */
@@ -25,7 +28,9 @@ export type ErrorCategory =
   | 'pessoa'
   | 'data'
   | 'correcao'
-  | 'valor_da_compra';
+  | 'valor_da_compra'
+  | 'valor_da_fatura'
+  | 'tema_de_ajuda';
 
 function cents(text: string | null): number | null {
   if (text === null) return null;
@@ -96,6 +101,14 @@ export function compareInterpretation(
     if (cents(actual.purchase?.amount_text ?? null) !== expected.purchaseAmount) {
       errors.push('valor_da_compra');
     }
+  }
+  if (expected.invoiceAmount !== undefined) {
+    if (cents(actual.invoice?.amount_text ?? null) !== expected.invoiceAmount) {
+      errors.push('valor_da_fatura');
+    }
+  }
+  if (expected.helpTopics && !expected.helpTopics.includes(actual.help_topic ?? '')) {
+    errors.push('tema_de_ajuda');
   }
   return [...new Set(errors)];
 }
