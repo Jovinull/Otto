@@ -62,6 +62,41 @@ describe('nomes de conta com espaco', () => {
     expect(await say('/compromissos')).toContain('· Mercado Pago ·');
   });
 
+  it('"saldo 1500" sem igual vira saldo, nao parte do nome', async () => {
+    await say('/addconta corrente PicPay saldo 1500 padrao');
+    await say('/addconta cartao Santander fecha 3 vence: 10 limite R$ 5000');
+    await say('/editconta Mercado Pago saldo: 1200');
+    const rows = await h.query<{ name: string; opening: number | null; closing: number | null }>(
+      `SELECT name, opening_balance_cents AS opening, credit_closing_day AS closing
+       FROM financial_accounts ORDER BY name`,
+    );
+    expect(rows.map((r) => r.name)).toEqual([
+      'Cofre Mercado Pago',
+      'Mercado Pago',
+      'PicPay',
+      'Santander',
+    ]);
+    expect(rows.find((r) => r.name === 'PicPay')!.opening).toBe(150000);
+    expect(rows.find((r) => r.name === 'Mercado Pago')!.opening).toBe(120000);
+    expect(rows.find((r) => r.name === 'Santander')!.closing).toBe(3);
+  });
+
+  it('conta criada com o saldo no nome se ajeita com /editconta', async () => {
+    // Como ficou em producao antes da correcao.
+    await h.query(
+      `UPDATE financial_accounts SET name = 'Mercado Pago saldo 1500',
+       normalized_name = 'mercado pago saldo 1500', opening_balance_cents = NULL,
+       opening_balance_date = NULL WHERE name = 'Mercado Pago'`,
+    );
+    await h.query(
+      "UPDATE financial_accounts SET name = 'Cofre', normalized_name = 'cofre' WHERE kind = 'reserve'",
+    );
+    expect(await say('/editconta Mercado Pago nome=Mercado_Pago saldo=1500')).toContain(
+      'saldo inicial',
+    );
+    expect(await say('/contas')).toContain('Mercado Pago (Felipe): R$ 1.500,00');
+  });
+
   it('nome escrito junto acha a conta', async () => {
     await say('/gasto 10 pao @MercadoPago');
     expect(await h.count('financial_transactions')).toBe(1);

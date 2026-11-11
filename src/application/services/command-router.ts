@@ -109,6 +109,45 @@ function joinAccountTokens(args: readonly string[], accounts: Scope['accounts'])
   return joined;
 }
 
+const NUMERIC_ACCOUNT_OPTIONS = new Set([
+  'saldo',
+  'fecha',
+  'vence',
+  'limite',
+  'disponivel',
+  'divida',
+]);
+const ACCOUNT_OPTION_COMMANDS = new Set(['addconta', 'editconta']);
+const OPTION_VALUE = /^(r\$)?[\d.,]+$|^[?-]$/i;
+
+/** "saldo 1500", "saldo: 1500" e "fecha 3" viram "saldo=1500" e "fecha=3", em vez de parte do nome. */
+function inlineAccountOptions(args: readonly string[]): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    const match = /^([a-z]+)[:=]?(.*)$/i.exec(token);
+    const key = match ? normalizeText(match[1]!) : '';
+    if (!NUMERIC_ACCOUNT_OPTIONS.has(key) || /^[a-z]+=.+$/i.test(token)) {
+      result.push(token);
+      continue;
+    }
+    let value = match![2]!;
+    let next = i;
+    if (!value) {
+      if (args[next + 1]?.toLowerCase() === 'r$') next++;
+      value = args[next + 1] ?? '';
+      next++;
+    }
+    if (OPTION_VALUE.test(value)) {
+      result.push(`${key}=${value.replace(/^r\$/i, '')}`);
+      i = next;
+    } else {
+      result.push(token);
+    }
+  }
+  return result;
+}
+
 const DATE_TOKEN = /^(hoje|ontem|anteontem|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i;
 
 function buildDraftFromArgs(
@@ -309,7 +348,8 @@ export async function handleCommand(
   rawArgs: string[],
 ): Promise<Effect> {
   const { scope } = actor;
-  const args = joinAccountTokens(rawArgs, scope.accounts);
+  const joinedArgs = joinAccountTokens(rawArgs, scope.accounts);
+  const args = ACCOUNT_OPTION_COMMANDS.has(command) ? inlineAccountOptions(joinedArgs) : joinedArgs;
   const period = periodOf(actor.today);
   const { options, rest } = splitOptions(args);
 
