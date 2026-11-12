@@ -14,6 +14,10 @@ export interface Expectation {
   /** Valor informado da fatura a conferir; null exige que o modelo nao invente. */
   invoiceAmount?: number | null;
   helpTopics?: string[];
+  /** Nenhum lancamento pode ter pessoa: quem deu o dinheiro (mae, amigo) nao e membro. */
+  noPerson?: boolean;
+  /** Trecho que precisa aparecer na conta de origem ou de destino extraida. */
+  account?: string;
 }
 
 /** Categorias de erro usadas no relatorio da avaliacao. */
@@ -30,7 +34,9 @@ export type ErrorCategory =
   | 'correcao'
   | 'valor_da_compra'
   | 'valor_da_fatura'
-  | 'tema_de_ajuda';
+  | 'tema_de_ajuda'
+  | 'pessoa_de_fora'
+  | 'conta';
 
 function cents(text: string | null): number | null {
   if (text === null) return null;
@@ -109,6 +115,19 @@ export function compareInterpretation(
   }
   if (expected.helpTopics && !expected.helpTopics.includes(actual.help_topic ?? '')) {
     errors.push('tema_de_ajuda');
+  }
+  if (expected.noPerson && actual.transactions.some((t) => t.person_text !== null)) {
+    errors.push('pessoa_de_fora');
+  }
+  if (expected.account) {
+    const target = normalizeText(expected.account);
+    const accounts = actual.transactions.flatMap((t) => [
+      t.source_account_text,
+      t.destination_account_text,
+    ]);
+    if (!accounts.some((a) => a !== null && normalizeText(a).includes(target))) {
+      errors.push('conta');
+    }
   }
   return [...new Set(errors)];
 }

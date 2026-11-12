@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "descricao": "Mensagens reais do grupo do casal que o Otto errou ou nao respondeu em 11 e 12/11/2026. Uso: pnpm eval:openai -- --yes --file evals/conversas-reais.json",
+  "cases": [
+    {
+      "id": "cr1",
+      "kind": "entrada",
+      "text": "Coloque 50 reais no nubank, recebi da minha mãe",
+      "expect": {
+        "intents": ["register_income"],
+        "kinds": ["income"],
+        "amounts": [5000],
+        "noPerson": true,
+        "account": "nubank"
+      }
+    },
+    {
+      "id": "cr2",
+      "kind": "entrada",
+      "text": "Coloque 50 reais na conta nubank mesada",
+      "expect": {
+        "intents": ["register_income"],
+        "kinds": ["income"],
+        "amounts": [5000],
+        "account": "nubank"
+      }
+    },
+    {
+      "id": "cr3",
+      "kind": "entrada",
+      "text": "Ganhei 50 reais no nubank mesada",
+      "expect": {
+        "intents": ["register_income"],
+        "kinds": ["income"],
+        "amounts": [5000],
+        "account": "nubank"
+      }
+    },
+    {
+      "id": "cr4",
+      "kind": "entrada",
+      "text": "Otto eu quero adicionar 50 reais na conta nubank que eu ganhei de mesada da minha mãe",
+      "expect": {
+        "intents": ["register_income"],
+        "kinds": ["income"],
+        "amounts": [5000],
+        "noPerson": true,
+        "account": "nubank"
+      }
+    },
+    {
+      "id": "cr5",
+      "kind": "cartao",
+      "text": "Gastei 2,70 na fatura do cartão de crédito Picpay",
+      "expect": {
+        "intents": ["register_expense"],
+        "kinds": ["expense"],
+        "amounts": [270],
+        "account": "picpay"
+      }
+    },
+    {
+      "id": "cr6",
+      "kind": "cartao",
+      "text": "Gastei 427,03 da fatura no cartão de crédito mercado pago",
+      "expect": {
+        "intents": ["register_expense"],
+        "kinds": ["expense"],
+        "amounts": [42703],
+        "account": "mercado pago"
+      }
+    },
+    {
+      "id": "cr7",
+      "kind": "cartao",
+      "text": "Paguei R$ 300 da fatura do PicPay",
+      "expect": {
+        "intents": ["register_transfer"],
+        "kinds": ["card_payment"],
+        "amounts": [30000]
+      }
+    },
+    {
+      "id": "cr8",
+      "kind": "gasto",
+      "text": "Gastei 12 em beiju Santander",
+      "expect": {
+        "intents": ["register_expense"],
+        "amounts": [1200],
+        "account": "santander"
+      }
+    },
+    {
+      "id": "cr9",
+      "kind": "gasto",
+      "text": "Gastei 12 lanche mercado pago",
+      "expect": {
+        "intents": ["register_expense"],
+        "amounts": [1200],
+        "account": "mercado pago"
+      }
+    },
+    {
+      "id": "cr10",
+      "kind": "gasto",
+      "text": "12 ,00 reais Santander",
+      "expect": { "intents": ["register_expense", "unknown"] }
+    },
+    {
+      "id": "cr11",
+      "kind": "salario",
+      "text": "Meu salário caiu mas veio um pouco a mais como faço?",
+      "expect": { "intents": ["how_to"], "helpTopics": ["income"] }
+    },
+    {
+      "id": "cr12",
+      "kind": "salario",
+      "text": "Meu salário caiu",
+      "expect": { "intents": ["register_income"], "amounts": [null] }
+    },
+    {
+      "id": "cr13",
+      "kind": "ajuda",
+      "text": "Otto eu tenho uma conta no nubank, como coloco para tu registrar dinheiro nela?",
+      "expect": { "intents": ["how_to"], "helpTopics": ["add_money"] }
+    },
+    {
+      "id": "cr14",
+      "kind": "ajuda",
+      "text": "Como faço para adicionar mais dinheiro em minha conta",
+      "expect": { "intents": ["how_to"], "helpTopics": ["add_money"] }
+    },
+    {
+      "id": "cr15",
+      "kind": "ajuda",
+      "text": "Otto como faço para registrar uma compra feita no cartão de crédito",
+      "expect": { "intents": ["how_to"], "helpTopics": ["card_purchase"] }
+    }
+  ]
+}
