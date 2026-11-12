@@ -81,6 +81,44 @@ O que a restauração de teste confere:
 
 **Validação feita até aqui:** backup e restauração testados com o banco local. O dump remoto de produção ainda não foi restaurado; faça isso no primeiro backup real.
 
+### Automatizar o backup semanal (Linux, sem custo)
+
+Um timer de usuário do systemd roda o backup na sua máquina. A senha fica num arquivo que só você lê, fora do repositório; use apenas num computador pessoal com disco criptografado.
+
+```bash
+install -d -m 700 ~/otto-backups
+(umask 077; printf '%s' '<senha de backup>' > ~/otto-backups/.backup-passphrase)
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/otto-backup.service <<'UNIT'
+[Unit]
+Description=Backup semanal do Otto
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Workspace/Otto
+Environment=OTTO_BACKUP_KEEP=12
+ExecStart=/bin/bash -c 'OTTO_BACKUP_PASSPHRASE="$(cat %h/otto-backups/.backup-passphrase)" pnpm backup:prod'
+UNIT
+
+cat > ~/.config/systemd/user/otto-backup.timer <<'UNIT'
+[Unit]
+Description=Backup semanal do Otto
+
+[Timer]
+OnCalendar=Sun 10:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl --user daemon-reload
+systemctl --user enable --now otto-backup.timer
+```
+
+`Persistent=true` roda o backup assim que o computador ligar, se ele estava desligado no domingo. O login do Wrangler (`pnpm exec wrangler login`) precisa estar válido; confira o resultado com `journalctl --user -u otto-backup`. Depois do primeiro backup, teste a restauração com `pnpm restore:test`.
+
 ### Automatizar o backup semanal (Windows, sem custo)
 
 O Agendador de Tarefas do Windows roda o backup na sua máquina. A senha precisa ficar guardada no computador: use isso apenas num PC pessoal com disco criptografado (BitLocker).

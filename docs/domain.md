@@ -32,6 +32,10 @@ Restrições no próprio banco: valor > 0, forma de cada tipo (transferência ex
 
 **Despesa.** Igual à receita, com a conta de origem. Atribuída ao remetente, ou a quem a mensagem nomeia ("Jennifer comprou…", "minha esposa…").
 
+**Quem recebeu e de onde veio.** Numa receita, "recebi da minha mãe" diz de onde veio o dinheiro, não de quem ele é: ela não é membro da casa, então a entrada fica para quem escreveu e o descritivo guarda "mesada (minha mãe)". Em despesa, uma pessoa que não é da casa continua recusada, e o Otto lista quem existe.
+
+**Escolha da conta numa resposta.** Quando o Otto pergunta "em qual conta?", ele aceita o rótulo da lista (`Nubank (Jovino)`, `Mercado Pago (cartão, Jenne)`), o nome com o dono (`Nubank Jovino`) e frases soltas (`Entrou em Nubank (Jovino)`). Receita nunca oferece cartão. Se a mensagem cita um banco e o modelo deixou a conta em branco, vale o banco citado (`no cartão de crédito Picpay` vai para o cartão Picpay, não para o padrão).
+
 **Transferência.** Tipo próprio (`transfer/internal`). Não entra em receita, despesa nem orçamento. Move saldo entre contas sem criar dinheiro.
 
 **Cartão de crédito.** A compra é a despesa (competência na data da compra) e aumenta a dívida do cartão. O pagamento da fatura é transferência `card_payment` da conta para o cartão: reduz a dívida e o saldo da conta, sem nova despesa. Assim compra + fatura nunca duplicam o gasto. Compra no crédito sem cartão cadastrado é recusada.

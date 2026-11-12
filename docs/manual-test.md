@@ -4,7 +4,7 @@ Faça com valores pequenos e estorne no final. Marque cada item. Pré-requisito:
 
 ## 0. Verificações antes do grupo
 
-- [ ] `pnpm doctor -- --remote` termina com `0 erro(s)`.
+- [ ] `pnpm run doctor -- --remote` termina com `0 erro(s)`.
 - [ ] `pnpm doctor:telegram` sem erros: bot lê o grupo, webhook com `max_connections = 1`, grupo com 3 membros.
 - [ ] `pnpm smoke:openai -- --yes` termina com "OpenAI OK." e mostra o modelo servido.
 

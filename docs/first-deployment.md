@@ -128,7 +128,7 @@ Já foi feito no passo 8. Depois de editar `wrangler.jsonc` ou atualizar o códi
 Confira tudo:
 
 ```powershell
-pnpm doctor -- --remote
+pnpm run doctor -- --remote
 ```
 
 Deve terminar com `0 erro(s)`.
@@ -193,7 +193,7 @@ O roteiro completo está em [manual-test.md](manual-test.md).
 | ------------------------------------ | ------------------------------------------ |
 | Logs ao vivo (sem dados financeiros) | `pnpm exec wrangler tail --env production` |
 | Entrega do Telegram                  | `pnpm doctor:telegram`                     |
-| Configuração geral                   | `pnpm doctor -- --remote`                  |
+| Configuração geral                   | `pnpm run doctor -- --remote`              |
 | Fila de mensagens                    | `/status` no grupo                         |
 | Consumo de IA                        | `/ia` no grupo                             |
 
@@ -241,7 +241,7 @@ pnpm check
 pnpm backup:prod              # sempre antes de migrar
 pnpm db:migrate:prod          # só se houver migração nova
 pnpm deploy:prod
-pnpm doctor -- --remote
+pnpm run doctor -- --remote
 ```
 
 ### Atualização para contas, metas e reservas (migrações 0003 e 0004)
