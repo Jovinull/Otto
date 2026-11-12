@@ -11,6 +11,7 @@ import {
 } from '../../infrastructure/database/schema';
 import type { InboundEvent, OutgoingMessage } from '../../infrastructure/messaging/gateway';
 import { toLocalDate } from '../../shared/dates';
+import { normalizeText } from '../../shared/text';
 import { errorCode, logEvent, PermanentError, RetryableError } from '../../shared/errors';
 import type { Actor, Deps, Effect, Reply } from '../context';
 import { loadScopeWithPending } from '../context';
@@ -328,7 +329,8 @@ function backoffFor(attempts: number, hintMs?: number): number {
 function parseCommand(text: string): { command: string; args: string[] } | null {
   if (!text.startsWith('/')) return null;
   const [head, ...args] = text.trim().split(/\s+/);
-  const command = head!.slice(1).split('@')[0]!.toLowerCase();
+  // /orçamento e /ORCAMENTO valem como /orcamento: o teclado do celular coloca o acento.
+  const command = normalizeText(head!.slice(1).split('@')[0]!);
   return command ? { command, args } : null;
 }
 

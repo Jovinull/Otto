@@ -24,7 +24,13 @@ import {
   recurringEntries,
   recurringSettlements,
 } from '../../infrastructure/database/schema';
-import { formatShortDate, monthRange, periodOf, resolveDateExpression } from '../../shared/dates';
+import {
+  formatShortDate,
+  monthName,
+  monthRange,
+  periodOf,
+  resolveDateExpression,
+} from '../../shared/dates';
 import { formatBRL, splitInstallments } from '../../shared/money';
 import type { Actor, Deps, Effect, Reply } from '../context';
 import { ledgerContext, replyOnly } from '../context';
@@ -375,7 +381,7 @@ async function settlementStatements(
       }),
     );
     notes.push(
-      `Marquei "${match.description}" de ${formatShortDate(`${period}-01`).slice(3)} como ${match.kind === 'income' ? 'recebido' : 'pago'}.`,
+      `Marquei "${match.description}" de ${monthName(period)} como ${match.kind === 'income' ? 'recebido' : 'pago'}.`,
     );
   }
   return { statements, notes };

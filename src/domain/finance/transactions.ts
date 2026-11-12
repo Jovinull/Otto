@@ -141,10 +141,20 @@ export interface MatchOptions {
   /** Pessoa cujas contas tem preferencia quando ha nomes iguais. */
   memberId?: string | undefined;
   only?: 'card' | 'cash' | undefined;
+  /**
+   * Pessoas da casa. Com elas, "Nubank (Jovino)", "Nubank da Jenne" e "Nubank casal" apontam
+   * para a conta dessa pessoa: e o formato das opcoes que o proprio Otto oferece.
+   */
+  members?: readonly LedgerMember[] | undefined;
+  /** Aceita palavras sobrando ("nubank mesada", "entrou em Nubank"). So para linguagem natural. */
+  lenient?: boolean | undefined;
 }
 
 function hintWords(hint: string): string[] {
-  return normalizeText(hint).split(' ').filter(Boolean);
+  return normalizeText(hint)
+    .replace(/[(),;:]/g, ' ')
+    .split(' ')
+    .filter(Boolean);
 }
 
 function coreWords(hint: string): string[] {
@@ -178,18 +188,35 @@ export function matchAccount(
 ): AccountMatch {
   if (!hint) return { status: 'no_hint' };
   const words = hintWords(hint);
-  const tokens = coreWords(hint);
+  const allTokens = coreWords(hint);
   const cardSignal = hintSignalsCard(hint);
-  if (tokens.length === 0 && !cardSignal) return { status: 'no_hint' };
+  if (allTokens.length === 0 && !cardSignal) return { status: 'no_hint' };
 
+  // "Nome (Dono)" sem a palavra cartao e o rotulo de uma conta; o cartao vem como "(cartao, Dono)".
+  const isLabel = options.members !== undefined && /\(.*\)/.test(hint);
   const onlyClass = cardSignal
     ? 'card'
     : words.includes('conta') || words.includes('debito') || words.includes('pix')
       ? 'cash'
-      : options.only;
+      : isLabel && options.only === undefined
+        ? 'cash'
+        : options.only;
   const pool = accounts.filter((a) =>
     onlyClass === 'card' ? isCard(a) : onlyClass === 'cash' ? !isCard(a) : true,
   );
+
+  // Palavras que so dizem de quem e a conta ("Jovino", "casal") saem do nome. Um nome de conta
+  // que por acaso seja o de uma pessoa continua valendo como nome.
+  const accountWords = new Set(pool.flatMap((a) => a.normalizedName.split(' ')));
+  const memberByWord = new Map(
+    (options.members ?? []).map((m) => [normalizeText(m.name).split(' ')[0]!, m.id] as const),
+  );
+  const isOwnerWord = (token: string) =>
+    !accountWords.has(token) && (memberByWord.has(token) || token === 'casal');
+  const ownerWords = allTokens.filter(isOwnerWord);
+  const stripped = allTokens.filter((token) => !isOwnerWord(token));
+  const ownerFiltered = options.members !== undefined && ownerWords.length > 0;
+  const tokens = ownerFiltered && stripped.length > 0 ? stripped : allTokens;
 
   let candidates: LedgerAccount[];
   if (tokens.length === 0) {
@@ -217,12 +244,66 @@ export function matchAccount(
         candidates = pool.filter((a) => a.kind === 'joint');
       }
     }
+    // Palavras sobrando ("entrou em Nubank", "nubank mesada"): vale a conta cujo nome inteiro
+    // aparece na frase, a de nome mais longo.
+    if (candidates.length === 0 && options.lenient) {
+      const present = new Set(words);
+      const inside = pool.filter((a) => a.normalizedName.split(' ').every((w) => present.has(w)));
+      const longest = Math.max(0, ...inside.map((a) => a.normalizedName.split(' ').length));
+      candidates = inside.filter((a) => a.normalizedName.split(' ').length === longest);
+    }
+  }
+
+  if (ownerFiltered) {
+    // Quem disse de quem e a conta nao recebe a conta de outra pessoa.
+    const owners = new Set(
+      ownerWords.flatMap((word) => {
+        const id = memberByWord.get(word);
+        return id ? [id] : [];
+      }),
+    );
+    const wantsShared = ownerWords.includes('casal');
+    candidates = candidates.filter(
+      (a) =>
+        (a.ownerMemberId !== null && owners.has(a.ownerMemberId)) ||
+        (wantsShared && a.ownership === 'shared'),
+    );
   }
 
   const ranked = rankByOwner(candidates, options.memberId);
   if (ranked.length === 1) return { status: 'found', account: ranked[0]! };
   if (ranked.length > 1) return { status: 'ambiguous', options: ranked };
   return { status: 'not_found' };
+}
+
+/** Opcoes de linguagem natural: reconhece "Nome (Dono)" e palavras sobrando na frase. */
+function lenientOptions(context: LedgerContext): Pick<MatchOptions, 'members' | 'lenient'> {
+  return { members: context.members, lenient: true };
+}
+
+/**
+ * Nome de conta que a mensagem cita, quando cita exatamente um. Serve de rede de seguranca
+ * quando o modelo coloca o banco na descricao e deixa a conta em branco ("gastei 2,70 no
+ * cartao de credito Picpay"). Homonimos de pessoas diferentes contam como um nome so.
+ */
+export function mentionedAccountName(
+  message: string,
+  accounts: readonly LedgerAccount[],
+): string | null {
+  const clean = (value: string) =>
+    ` ${normalizeText(value)
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()} `;
+  const text = clean(message);
+  const found = new Map<string, string>();
+  for (const account of accounts) {
+    if (text.includes(clean(account.name))) found.set(clean(account.name), account.name);
+  }
+  // "Mercado" dentro de "Mercado Pago" e o mesmo nome, nao dois.
+  const names = [...found.keys()].filter(
+    (name) => ![...found.keys()].some((other) => other !== name && other.includes(name)),
+  );
+  return names.length === 1 ? (found.get(names[0]!) ?? null) : null;
 }
 
 /** Chave de unicidade: pessoas diferentes podem ter contas com o mesmo nome. */
@@ -309,9 +390,46 @@ function accountLabel(account: LedgerAccount, context: LedgerContext): string {
   return details ? `${account.name} (${details})` : account.name;
 }
 
-type MemberResolution = { member: LedgerMember } | { error: string };
+type MemberResolution = { member: LedgerMember; outsider?: string } | { error: string };
 
-function resolveMember(personText: string | null, context: LedgerContext): MemberResolution {
+/** Quem costuma dar dinheiro a alguem: nunca e membro da casa, e a origem da entrada. */
+const OUTSIDER_WORDS = new Set([
+  'mae',
+  'mainha',
+  'mamae',
+  'pai',
+  'painho',
+  'papai',
+  'vo',
+  'vovo',
+  'avo',
+  'tio',
+  'tia',
+  'irmao',
+  'irma',
+  'primo',
+  'prima',
+  'sogro',
+  'sogra',
+  'cunhado',
+  'cunhada',
+  'filho',
+  'filha',
+  'amigo',
+  'amiga',
+  'chefe',
+  'cliente',
+  'empresa',
+  'patrao',
+  'patroa',
+]);
+
+function resolveMember(
+  personText: string | null,
+  context: LedgerContext,
+  /** Receita: "recebi da minha mae" diz de onde veio o dinheiro, nao de quem ele e. */
+  allowOutsider = false,
+): MemberResolution {
   const sender = context.members.find((m) => m.id === context.senderMemberId);
   if (!sender) return { error: 'Remetente não pertence a esta família.' };
   if (!personText) return { member: sender };
@@ -329,7 +447,13 @@ function resolveMember(personText: string | null, context: LedgerContext): Membe
     const others = context.members.filter((m) => m.id !== sender.id);
     if (others.length === 1) return { member: others[0]! };
   }
-  return { error: `Não encontrei "${personText}" entre os membros cadastrados.` };
+  if (allowOutsider && words.some((w) => OUTSIDER_WORDS.has(w))) {
+    return { member: sender, outsider: personText.trim() };
+  }
+  const known = context.members.map((m) => m.name).join(' e ');
+  return {
+    error: `Não encontrei "${personText}" entre os membros cadastrados (${known}). Nada foi registrado.`,
+  };
 }
 
 function resolveCategory(
@@ -456,7 +580,11 @@ function resolveExpenseSource(
       : wantsCredit
         ? 'card'
         : undefined;
-  const match = matchAccount(hint, context.accounts, { memberId: member.id, only });
+  const match = matchAccount(hint, context.accounts, {
+    memberId: member.id,
+    only,
+    ...lenientOptions(context),
+  });
   if (match.status === 'found') {
     return { choice: { account: match.account, isCredit: isCard(match.account) } };
   }
@@ -562,9 +690,13 @@ function resolveTransferAccounts(
     let match = matchAccount(hint, context.accounts, {
       memberId: member.id,
       only: isPayment ? 'card' : 'cash',
+      members: context.members,
     });
     if (match.status === 'not_found' && !isPayment) {
-      match = matchAccount(hint, context.accounts, { memberId: member.id });
+      match = matchAccount(hint, context.accounts, {
+        memberId: member.id,
+        members: context.members,
+      });
     }
     if (match.status === 'found') destination = match.account;
     else if (match.status === 'ambiguous') destinationOptions = match.options;
@@ -576,7 +708,13 @@ function resolveTransferAccounts(
   }
   if (!destination) {
     const options =
-      destinationOptions ?? (isPayment ? context.accounts.filter(isCard) : context.accounts);
+      destinationOptions ??
+      (isPayment
+        ? context.accounts.filter(isCard)
+        : eligibleFor(
+            member,
+            context.accounts.filter((a) => !isCard(a)),
+          ));
     if (options.length === 0) {
       return { outcome: rejected('Ainda não há cartão cadastrado. Use /addconta cartao Nome.') };
     }
@@ -599,7 +737,7 @@ function resolveTransferAccounts(
     const match = matchAccount(
       draft.sourceAccountText,
       context.accounts.filter((a) => a.id !== target.id),
-      { memberId: member.id, only: 'cash' },
+      { memberId: member.id, only: 'cash', members: context.members },
     );
     if (match.status === 'found') source = match.account;
     else if (match.status === 'ambiguous') sourceOptions = match.options;
@@ -653,13 +791,15 @@ export function resolveDraft(draft: TransactionDraft, context: LedgerContext): R
   const date = resolveDate(draft, context.today);
   if ('outcome' in date) return date.outcome;
 
-  const resolved = resolveMember(draft.personText, context);
+  const resolved = resolveMember(draft.personText, context, draft.kind === 'income');
   if ('error' in resolved) return rejected(resolved.error);
   const member = resolved.member;
 
   const base = {
     amountCents: amount.cents,
-    description: draft.description,
+    description: resolved.outsider
+      ? `${draft.description} (${resolved.outsider})`.slice(0, 120)
+      : draft.description,
     memberId: member.id,
     memberName: member.name,
     isShared: draft.isShared,
@@ -701,11 +841,21 @@ export function resolveDraft(draft: TransactionDraft, context: LedgerContext): R
       context.accounts.filter((a) => !isCard(a)),
     );
     const chosen = context.accounts.find((a) => a.id === draft.destinationAccountId);
-    const match = matchAccount(
-      draft.destinationAccountText ?? draft.sourceAccountText,
-      chosen ? [] : context.accounts,
-      { memberId: member.id },
-    );
+    const incomeHint = draft.destinationAccountText ?? draft.sourceAccountText;
+    // Receita nao entra em cartao: so quem fala em cartao enxerga as contas de cartao, e a
+    // regra abaixo recusa. Sem isso, "Nubank" empata com o cartao e o Otto pergunta de novo.
+    const incomePool = hintSignalsCard(incomeHint)
+      ? context.accounts
+      : context.accounts.filter((a) => !isCard(a));
+    const incomeMatch = { memberId: member.id, ...lenientOptions(context) };
+    const match = matchAccount(incomeHint, chosen ? [] : incomePool, incomeMatch);
+    if (
+      !chosen &&
+      match.status === 'not_found' &&
+      matchAccount(incomeHint, context.accounts.filter(isCard), incomeMatch).status === 'found'
+    ) {
+      return rejected('Receita não pode entrar em cartão de crédito.');
+    }
     let account: LedgerAccount | null = chosen ?? null;
     if (!chosen && match.status === 'found') account = match.account;
     else if (!chosen && (match.status === 'ambiguous' || match.status === 'not_found')) {
@@ -805,13 +955,14 @@ export function applySlotAnswer(
           ? { ...draft, noAccount: true }
           : null;
       }
-      const payer = resolveMember(draft.personText, context);
+      const payer = resolveMember(draft.personText, context, draft.kind === 'income');
       const isPayment = draft.kind === 'card_payment';
       const wantsCard =
         slot === 'destination_account'
           ? isPayment
           : draft.paymentMethod === 'credit' || draft.installments !== null;
       const match = matchAccount(text, context.accounts, {
+        ...lenientOptions(context),
         memberId: 'member' in payer ? payer.member.id : context.senderMemberId,
         only: wantsCard
           ? 'card'
