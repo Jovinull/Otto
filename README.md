@@ -55,7 +55,7 @@ Sem token real do Telegram, as respostas ficam no outbox e a entrega falha com `
 ## Verificações
 
 ```bash
-pnpm test         # 288 testes no runtime do Workers com D1 local
+pnpm test         # 530+ testes no runtime do Workers com D1 local
 pnpm test:scripts # testes do backup (Node)
 pnpm typecheck
 pnpm lint
@@ -77,6 +77,7 @@ Não rodam na CI e só consomem créditos com `--yes`:
 pnpm smoke:openai -- --yes      # chave, modelo servido, saída estruturada, custo
 pnpm eval:openai -- --yes       # 44 mensagens do conjunto em evals/, taxa de acerto por tipo
 pnpm doctor:telegram            # somente leitura
+pnpm run doctor -- --remote     # configuração e Cloudflare (com `run`: `pnpm doctor` é um comando do próprio pnpm)
 ```
 
 ## Documentação

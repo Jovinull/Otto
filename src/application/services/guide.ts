@@ -93,7 +93,7 @@ export async function howToAnswer(
     case 'income':
       return [
         'Salário caiu: "Meu salário caiu" ou /recebi.',
-        'Veio diferente: "Recebi só 2000 do salário" ou /recebi salario 2000.',
+        'Veio a mais ou a menos: diga o valor que caiu, "Recebi 3400 do salário" ou /recebi salario 3400.',
         'Entrada avulsa: "Recebi 200 de um freela" ou /receita 200 freela.',
         `Renda que se repete: /renda 4000 dia=5 ${at(account, 'Conta')} (só prevê; o recebimento você avisa).`,
       ].join('\n');
@@ -163,6 +163,12 @@ export async function howToAnswer(
           ? `Suas: ${[...p.accounts, ...p.cards].map((a) => a.name).join(', ')}. Veja /minhascontas.`
           : 'Você ainda não cadastrou nenhuma.',
       ].join('\n');
+    case 'add_money':
+      return [
+        `Dinheiro que entrou numa conta que você já tem: "Recebi 50 de mesada no ${accountName}" ou /receita 50 mesada ${at(account, 'Conta')}.`,
+        `Se o saldo do banco é outro: "Meu ${accountName} está com 830 agora" ou /saldo ${accountName} 830. Eu mostro a diferença e só ajusto se você aprovar.`,
+        'Não use /addconta: ele cria uma conta nova, e a sua já está cadastrada (veja /minhascontas).',
+      ].join('\n');
     case 'balance_check':
       return [
         `Compare com o banco: "Meu ${accountName} está com 830 agora" ou /saldo ${accountName} 830.`,
@@ -218,6 +224,22 @@ const TOPIC_WORDS: [HelpTopic, string[]][] = [
   ['goal_money', ['meta', 'guard', 'cofre', 'reserva', 'viagem', 'apartamento']],
   ['income', ['salario', 'recebi', 'renda', 'caiu']],
   ['transfer', ['transfer', 'pix']],
+  [
+    'add_money',
+    [
+      'adicionar dinheiro',
+      'adicionar mais dinheiro',
+      'colocar dinheiro',
+      'coloco dinheiro',
+      'botar dinheiro',
+      'por dinheiro',
+      'depositar',
+      'deposito',
+      'dinheiro nela',
+      'dinheiro na conta',
+      'dinheiro em minha conta',
+    ],
+  ],
   ['balance_check', ['saldo']],
   ['correct', ['errad', 'errei', 'corrig', 'apag', 'estorn']],
   ['budget', ['orcamento', 'limite']],
@@ -237,6 +259,7 @@ const EXAMPLE: Record<HelpTopic, string> = {
   budget: '/orcamento delivery 250 ou /orcamento',
   fixed_bills: '/recorrente 1200 dia=5 aluguel ou /compromissos',
   accounts: '/addconta corrente Nubank saldo 1000 padrao',
+  add_money: '"Recebi 50 de mesada no Nubank" ou /receita 50 mesada @Nubank',
   balance_check: '"Meu Nubank está com 830 agora"',
   correct: '/ultimos e depois /corrigir CODIGO valor 30 ou /estornar CODIGO',
   shared: '/gasto 80 feira casal',

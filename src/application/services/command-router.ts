@@ -88,6 +88,54 @@ function splitOptions(args: readonly string[]): ParsedOptions {
   return { options, rest };
 }
 
+const OPTION_KEYS = new Set([
+  'dia',
+  'util',
+  'valor',
+  'prazo',
+  'aporte',
+  'nome',
+  'nota',
+  'saldo',
+  'fecha',
+  'vence',
+  'limite',
+  'disponivel',
+  'divida',
+  'banco',
+  'descricao',
+  'dono',
+  'de',
+  'entrada',
+  'custos',
+  'reserva',
+  'inicial',
+  'categoria',
+  'avisos',
+  'dias',
+]);
+
+/** "dia= 10" e "dia = 10" valem como "dia=10": quem digita no celular deixa espaco. */
+function joinDanglingEquals(args: readonly string[]): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i]!;
+    const bare = /^([a-z_]+)$/i.exec(token);
+    const standalone = bare && OPTION_KEYS.has(normalizeText(bare[1]!)) && args[i + 1] === '=';
+    const key = standalone ? `${token}=` : token;
+    const skip = standalone ? 1 : 0;
+    const next = args[i + 1 + skip];
+    const dangling = /^([a-z_]+)=$/i.exec(key);
+    if (dangling && OPTION_KEYS.has(normalizeText(dangling[1]!)) && next && !next.includes('=')) {
+      result.push(`${key}${next}`);
+      i += 1 + skip;
+    } else {
+      result.push(token);
+    }
+  }
+  return result;
+}
+
 /** "@Mercado Pago" chega em dois pedacos: junta quando formam o nome de uma conta. */
 function joinAccountTokens(args: readonly string[], accounts: Scope['accounts']): string[] {
   const names = new Set(accounts.map((a) => a.normalizedName));
@@ -350,7 +398,7 @@ export async function handleCommand(
   rawArgs: string[],
 ): Promise<Effect> {
   const { scope } = actor;
-  const joinedArgs = joinAccountTokens(rawArgs, scope.accounts);
+  const joinedArgs = joinAccountTokens(joinDanglingEquals(rawArgs), scope.accounts);
   const args = ACCOUNT_OPTION_COMMANDS.has(command) ? inlineAccountOptions(joinedArgs) : joinedArgs;
   const period = periodOf(actor.today);
   const { options, rest } = splitOptions(args);
@@ -474,7 +522,13 @@ export async function handleCommand(
       if (rest.length === 0) return replyOnly(await budgetsReport(deps, scope, actor.today));
       if (rest.length === 1) {
         const category = findCategoryByText(actor, rest[0]!, 'expense');
-        if (!category) return replyOnly('Categoria não encontrada. Veja /categorias.');
+        if (!category) {
+          // "/orcamento 1500": so o valor e o limite do mes todo.
+          if (parseBRL(rest[0]!).status !== 'invalid') {
+            return setBudget(deps, actor, null, rest[0]!, options.get('de') ?? null);
+          }
+          return replyOnly('Categoria não encontrada. Veja /categorias.');
+        }
         return replyOnly(await budgetsReport(deps, scope, actor.today, category.id));
       }
       const amount = rest[rest.length - 1]!;
@@ -490,7 +544,12 @@ export async function handleCommand(
     case 'meta': {
       const action = normalizeText(rest[0] ?? '');
       if (action === 'criar' || action === 'nova') {
-        const name = rest.slice(1).join(' ');
+        // "/meta criar Casa valor=100000 12/2028": a data solta no fim e o prazo, nao o nome.
+        const tail = rest.at(-1);
+        const looseDeadline =
+          rest.length > 2 && tail && /^\d{1,2}\/\d{4}$/.test(tail) && !options.has('prazo');
+        if (looseDeadline) options.set('prazo', tail);
+        const name = (looseDeadline ? rest.slice(1, -1) : rest.slice(1)).join(' ');
         if (!name)
           return replyOnly(
             'Formato: /meta criar NOME valor=VALOR [prazo=MM/AAAA] [aporte=VALOR] [dono=Nome]',
@@ -597,11 +656,19 @@ export async function handleCommand(
         : scheduleFromOptions(options);
       if (typeof schedule === 'string') return replyOnly(schedule);
       const accountToken = args.find((t) => t.startsWith('@') && t.length > 1);
+      // "/renda 1499 dia=10 mercado pago padrao": sem @, as palavras que sobram sao a conta.
+      const leftover = rest
+        .slice(1)
+        .filter((t) => !['irregular', 'padrao', 'conta'].includes(normalizeText(t)));
       return configureIncome(deps, actor, {
         amountText: amountText === '?' ? null : amountText,
         name: options.get('nome') ?? null,
         ...schedule,
-        accountText: accountToken ? accountToken.slice(1) : null,
+        accountText: accountToken
+          ? accountToken.slice(1)
+          : leftover.length > 0
+            ? leftover.join(' ')
+            : null,
         personText: options.get('de')?.replaceAll('_', ' ') ?? null,
         irregular,
       });

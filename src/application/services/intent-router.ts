@@ -1,5 +1,11 @@
 import type { TransactionDraft } from '../../domain/finance/transactions';
-import { amountAppearsInText, matchAccount } from '../../domain/finance/transactions';
+import {
+  amountAppearsInText,
+  isBareCardHint,
+  matchAccount,
+  mentionedAccountName,
+} from '../../domain/finance/transactions';
+import type { LedgerAccount } from '../../domain/finance/transactions';
 import { canWrite } from '../../domain/household/authorization';
 import type { Interpretation, TransactionItem } from '../../infrastructure/ai/interpretation';
 import type { Stmt } from '../../infrastructure/database/client';
@@ -74,6 +80,32 @@ function toDraft(item: TransactionItem): TransactionDraft {
 }
 
 const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** Valor em reais escrito na mensagem: quem escreve assim espera uma resposta, nao silencio. */
+function mentionsMoney(message: string): boolean {
+  return /\d/.test(message) && /(^|[^a-z])(r\$|reais|real)([^a-z]|$)/i.test(normalizeText(message));
+}
+
+/**
+ * O modelo as vezes deixa o banco so na descricao ("fatura Picpay") e a conta em branco, e o
+ * Otto usava o cartao padrao. Se a mensagem cita exatamente uma conta, ela vale.
+ */
+function withMentionedAccount(
+  draft: TransactionDraft,
+  message: string,
+  accounts: readonly LedgerAccount[],
+): TransactionDraft {
+  if (draft.kind === 'transfer' || draft.kind === 'card_payment') return draft;
+  const field = draft.kind === 'expense' ? 'sourceAccountText' : 'destinationAccountText';
+  const current =
+    draft.kind === 'income'
+      ? (draft.destinationAccountText ?? draft.sourceAccountText)
+      : draft.sourceAccountText;
+  if (current && !isBareCardHint(current)) return draft;
+  const name = mentionedAccountName(message, accounts);
+  if (!name) return draft;
+  return { ...draft, [field]: current ? `${current} ${name}` : name };
+}
 
 /** O modelo as vezes toma o nome do assistente, em "Otto, ...", como a pessoa citada. */
 function withoutAssistantName(interpretation: Interpretation): Interpretation {
@@ -199,13 +231,15 @@ export async function routeIntent(
     case 'register_transfer': {
       if (!write) return replyOnly(READ_ONLY);
       if (interpretation.transactions.length === 0) {
-        return addressed
-          ? replyOnly('Não identifiquei nenhum lançamento nessa mensagem.')
+        return addressed || mentionsMoney(message)
+          ? replyOnly(notUnderstood(message))
           : { statements: [], replies: [] };
       }
       const vault = await transferToLinkedVault(deps, actor, interpretation, message);
       if (vault) return vault;
-      const drafts = interpretation.transactions.map(toDraft);
+      const drafts = interpretation.transactions
+        .map(toDraft)
+        .map((draft) => withMentionedAccount(draft, message, scope.accounts));
       return recordDrafts(deps, actor, drafts, {
         origin: 'natural_language',
         idempotencyPrefix: actor.eventId,
@@ -609,7 +643,9 @@ Para conferir, me diga o valor que veio: "a fatura veio 300" ou /fatura ${cardTe
       return replyOnly(await analysisAnswer(deps, scope, actor.member.id, today, message));
 
     case 'unknown':
-      return addressed ? replyOnly(notUnderstood(message)) : { statements: [], replies: [] };
+      return addressed || mentionsMoney(message)
+        ? replyOnly(notUnderstood(message))
+        : { statements: [], replies: [] };
 
     case 'not_financial':
       return { statements: [], replies: [] };

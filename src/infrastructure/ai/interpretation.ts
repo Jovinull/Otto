@@ -145,6 +145,7 @@ export const HELP_TOPICS = [
   'budget',
   'fixed_bills',
   'accounts',
+  'add_money',
   'balance_check',
   'correct',
   'shared',

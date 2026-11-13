@@ -22,7 +22,7 @@ Tudo no plano gratuito, em `*.workers.dev`, sem domínio próprio nem billing. O
 3. `pnpm db:migrate:prod`
 4. `pnpm deploy:prod`: sem segredos, o webhook recusa tudo (seguro).
 5. `wrangler secret put` para `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `ADMIN_API_TOKEN` e `OPENAI_API_KEY`. Cada `secret put` publica uma versão nova automaticamente.
-6. `pnpm doctor -- --remote`
+6. `pnpm run doctor -- --remote`
 7. `pnpm telegram:webhook`, `/id` no grupo e `pnpm bootstrap:household`.
 
 Segredos são cadastrados **depois** do primeiro deploy porque `secret put` num Worker inexistente pede para criá-lo de forma interativa.
@@ -58,7 +58,7 @@ pnpm test
 pnpm backup:prod             # antes de migrar produção
 pnpm db:migrate:prod
 pnpm deploy:prod
-pnpm doctor -- --remote
+pnpm run doctor -- --remote
 ```
 
 Migrações devem ser aditivas, para que a versão anterior do código continue funcionando se for preciso voltar.
@@ -71,11 +71,11 @@ Migrações devem ser aditivas, para que a versão anterior do código continue 
 
 ## Diagnóstico
 
-| Ferramenta                                 | O que mostra                                                                             |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `pnpm doctor` / `pnpm doctor -- --remote`  | Configuração, segredos (só nomes), migrações, login, `/health`                           |
-| `pnpm doctor:telegram`                     | Token, webhook, erros de entrega, permissões do bot e tamanho do grupo (somente leitura) |
-| `pnpm smoke:openai -- --yes`               | Chave, modelo servido, saída estruturada, tokens e custo                                 |
-| `GET /health`                              | Banco acessível                                                                          |
-| `GET /admin/status` (token)                | Contagem de eventos e mensagens por estado                                               |
-| `pnpm exec wrangler tail --env production` | Logs JSON sem dados financeiros                                                          |
+| Ferramenta                                        | O que mostra                                                                             |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `pnpm run doctor` / `pnpm run doctor -- --remote` | Configuração, segredos (só nomes), migrações, login, `/health`                           |
+| `pnpm doctor:telegram`                            | Token, webhook, erros de entrega, permissões do bot e tamanho do grupo (somente leitura) |
+| `pnpm smoke:openai -- --yes`                      | Chave, modelo servido, saída estruturada, tokens e custo                                 |
+| `GET /health`                                     | Banco acessível                                                                          |
+| `GET /admin/status` (token)                       | Contagem de eventos e mensagens por estado                                               |
+| `pnpm exec wrangler tail --env production`        | Logs JSON sem dados financeiros                                                          |
